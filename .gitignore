@@ -1,0 +1,13 @@
+# UE build artifacts
+Binaries/
+Intermediate/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user

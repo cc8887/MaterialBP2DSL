@@ -1,0 +1,52 @@
+;; Example: Simple PBR Material
+;; This demonstrates the MatLang DSL syntax for a basic material
+
+(material "M_SimplePBR"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    ;; Base color from texture
+    (texture-sample $tex1
+      :texture (asset "/Game/Textures/T_Brick_BaseColor")
+      :uv (connect $uv1))
+
+    ;; Normal map
+    (texture-sample $tex2
+      :texture (asset "/Game/Textures/T_Brick_Normal")
+      :uv (connect $uv1))
+
+    ;; Texture coordinates
+    (texture-coordinate $uv1
+      :coordinate-index 0
+      :u-tiling 2.0
+      :v-tiling 2.0)
+
+    ;; Tint color parameter
+    (vector-parameter $vparam1
+      :name "TintColor"
+      :default (1.0 0.8 0.6 1.0)
+      :group "Base")
+
+    ;; Multiply base color with tint
+    (multiply $mul1
+      :a (connect $tex1 0)
+      :b (connect $vparam1 0))
+
+    ;; Roughness parameter
+    (scalar-parameter $sparam1
+      :name "Roughness"
+      :default 0.65
+      :group "Surface")
+
+    ;; Metallic constant
+    (constant $const1
+      :value 0.0))
+
+  (outputs
+    :base-color (connect $mul1 0)
+    :normal (connect $tex2 0)
+    :metallic (connect $const1 0)
+    :roughness (connect $sparam1 0)))

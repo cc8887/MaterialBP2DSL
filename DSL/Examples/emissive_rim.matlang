@@ -1,0 +1,53 @@
+;; Example: Emissive Material with Fresnel rim effect
+;; Demonstrates more complex expression chains
+
+(material "M_EmissiveRim"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+
+  (expressions
+    ;; Base color
+    (constant3-vector $vec1
+      :value (0.05 0.05 0.1))
+
+    ;; Emissive color parameter
+    (vector-parameter $vparam1
+      :name "EmissiveColor"
+      :default (0.0 0.5 1.0 1.0)
+      :group "Emissive")
+
+    ;; Emissive intensity
+    (scalar-parameter $sparam1
+      :name "EmissiveIntensity"
+      :default 5.0
+      :group "Emissive")
+
+    ;; Fresnel for rim lighting
+    (fresnel $fresnel1
+      :exponent 3.0
+      :base-reflect-fraction 0.04)
+
+    ;; Multiply fresnel with emissive color
+    (multiply $mul1
+      :a (connect $fresnel1 0)
+      :b (connect $vparam1 0))
+
+    ;; Multiply with intensity
+    (multiply $mul2
+      :a (connect $mul1 0)
+      :b (connect $sparam1 0))
+
+    ;; Roughness
+    (constant $const1
+      :value 0.3)
+
+    ;; Metallic
+    (constant $const2
+      :value 0.9))
+
+  (outputs
+    :base-color (connect $vec1 0)
+    :emissive-color (connect $mul2 0)
+    :metallic (connect $const2 0)
+    :roughness (connect $const1 0)))
