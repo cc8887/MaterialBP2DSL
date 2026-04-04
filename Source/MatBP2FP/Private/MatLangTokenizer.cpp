@@ -253,7 +253,28 @@ FMatLangToken FMatLangTokenizer::ScanKeyword()
 {
 	int32 StartLine = Line, StartCol = Col, StartOffset = Pos;
 	Advance(); // consume :
-	
+
+	// Support :"quoted key with spaces" form
+	if (!IsAtEnd() && Peek() == '"')
+	{
+		Advance(); // consume opening "
+		FString Value;
+		while (!IsAtEnd() && Peek() != '"')
+		{
+			if (Peek() == '\\' && PeekAt(1) == '"')
+			{
+				Advance(); // skip backslash
+				Value += Advance();
+			}
+			else
+			{
+				Value += Advance();
+			}
+		}
+		if (!IsAtEnd()) Advance(); // consume closing "
+		return MakeToken(EMatLangTokenType::Keyword, Value, StartLine, StartCol, StartOffset);
+	}
+
 	FString Value;
 	while (!IsAtEnd() && (IsIdentChar(Peek()) || IsDigit(Peek())))
 	{
