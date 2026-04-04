@@ -235,6 +235,18 @@ TSharedPtr<FMatExpressionAST> FMatBPExporter::ExportExpression(UMaterialExpressi
 	return Node;
 }
 
+// Wrap a raw string value in DSL double-quotes, escaping any internal " and \ characters.
+// Every string literal in the DSL must pass through this helper so that ScanString can
+// round-trip the value correctly.
+static FString EscapeForDSLString(const FString& Raw)
+{
+	FString Escaped = Raw;
+	// Order matters: escape backslashes first, then double-quotes
+	Escaped = Escaped.Replace(TEXT("\\"), TEXT("\\\\"));
+	Escaped = Escaped.Replace(TEXT("\""), TEXT("\\\""));
+	return FString::Printf(TEXT("\"%s\""), *Escaped);
+}
+
 void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TSharedPtr<FMatExpressionAST> Node)
 {
 	// ---- Constants ----
@@ -262,27 +274,27 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 	// ---- Parameters ----
 	if (auto* SP = Cast<UMaterialExpressionScalarParameter>(Expr))
 	{
-		Node->Properties.Add(TEXT("name"), FString::Printf(TEXT("\"%s\""), *SP->ParameterName.ToString()));
+		Node->Properties.Add(TEXT("name"), EscapeForDSLString(SP->ParameterName.ToString()));
 		Node->Properties.Add(TEXT("default"), FString::SanitizeFloat(SP->DefaultValue));
 		if (!SP->Group.IsNone())
 		{
-			Node->Properties.Add(TEXT("group"), FString::Printf(TEXT("\"%s\""), *SP->Group.ToString()));
+			Node->Properties.Add(TEXT("group"), EscapeForDSLString(SP->Group.ToString()));
 		}
 		return;
 	}
 	if (auto* VP = Cast<UMaterialExpressionVectorParameter>(Expr))
 	{
-		Node->Properties.Add(TEXT("name"), FString::Printf(TEXT("\"%s\""), *VP->ParameterName.ToString()));
+		Node->Properties.Add(TEXT("name"), EscapeForDSLString(VP->ParameterName.ToString()));
 		Node->Properties.Add(TEXT("default"), FString::Printf(TEXT("(%g %g %g %g)"), VP->DefaultValue.R, VP->DefaultValue.G, VP->DefaultValue.B, VP->DefaultValue.A));
 		if (!VP->Group.IsNone())
 		{
-			Node->Properties.Add(TEXT("group"), FString::Printf(TEXT("\"%s\""), *VP->Group.ToString()));
+			Node->Properties.Add(TEXT("group"), EscapeForDSLString(VP->Group.ToString()));
 		}
 		return;
 	}
 	if (auto* SSP = Cast<UMaterialExpressionStaticSwitchParameter>(Expr))
 	{
-		Node->Properties.Add(TEXT("name"), FString::Printf(TEXT("\"%s\""), *SSP->ParameterName.ToString()));
+		Node->Properties.Add(TEXT("name"), EscapeForDSLString(SSP->ParameterName.ToString()));
 		Node->Properties.Add(TEXT("default"), SSP->DefaultValue ? TEXT("true") : TEXT("false"));
 		return;
 	}
@@ -298,7 +310,7 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 	}
 	if (auto* TOP = Cast<UMaterialExpressionTextureObjectParameter>(Expr))
 	{
-		Node->Properties.Add(TEXT("name"), FString::Printf(TEXT("\"%s\""), *TOP->ParameterName.ToString()));
+		Node->Properties.Add(TEXT("name"), EscapeForDSLString(TOP->ParameterName.ToString()));
 		if (TOP->Texture)
 		{
 			Node->Properties.Add(TEXT("default-texture"), FString::Printf(TEXT("(asset \"%s\")"), *TOP->Texture->GetPathName()));
@@ -353,11 +365,11 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 	// ---- Custom (HLSL) ----
 	if (auto* Custom = Cast<UMaterialExpressionCustom>(Expr))
 	{
-		Node->Properties.Add(TEXT("code"), FString::Printf(TEXT("\"%s\""), *Custom->Code.Replace(TEXT("\""), TEXT("\\\""))));
+		Node->Properties.Add(TEXT("code"), EscapeForDSLString(Custom->Code));
 		Node->Properties.Add(TEXT("output-type"), FString::FromInt((int32)Custom->OutputType));
 		if (!Custom->Description.IsEmpty())
 		{
-			Node->Properties.Add(TEXT("description"), FString::Printf(TEXT("\"%s\""), *Custom->Description));
+			Node->Properties.Add(TEXT("description"), EscapeForDSLString(Custom->Description));
 		}
 		return;
 	}
@@ -416,7 +428,7 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 		if (!PropValue.IsEmpty())
 		{
 			FString PropName = CamelToKebab(Prop->GetName());
-			Node->Properties.Add(PropName, FString::Printf(TEXT("\"%s\""), *PropValue));
+			Node->Properties.Add(PropName, EscapeForDSLString(PropValue));
 		}
 	}
 }

@@ -500,7 +500,13 @@ FString FMatLangParser::ParseValue()
 	// String
 	if (Check(EMatLangTokenType::String))
 	{
-		FString Val = FString::Printf(TEXT("\"%s\""), *Current().Value);
+		// Current().Value is the already-unescaped content (Tokenizer strips outer quotes
+		// and resolves \" -> ").  We must re-escape when serialising back to DSL so that
+		// the round-trip is stable: \ -> \\, " -> \"
+		FString Raw = Current().Value;
+		Raw = Raw.Replace(TEXT("\\"), TEXT("\\\\"));
+		Raw = Raw.Replace(TEXT("\""), TEXT("\\\""));
+		FString Val = FString::Printf(TEXT("\"%s\""), *Raw);
 		Advance();
 		return Val;
 	}
@@ -558,7 +564,11 @@ FString FMatLangParser::ParseValue()
 			
 			if (Current().Type == EMatLangTokenType::String)
 			{
-				Val += FString::Printf(TEXT("\"%s\""), *Current().Value);
+				// Re-escape the unescaped token value so the round-trip is stable
+				FString RawStr = Current().Value;
+				RawStr = RawStr.Replace(TEXT("\\"), TEXT("\\\\"));
+				RawStr = RawStr.Replace(TEXT("\""), TEXT("\\\""));
+				Val += FString::Printf(TEXT("\"%s\""), *RawStr);
 			}
 			else if (Current().Type == EMatLangTokenType::Keyword)
 			{

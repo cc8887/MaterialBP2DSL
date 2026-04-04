@@ -57,6 +57,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPImporter, Log, All);
 #include "Materials/MaterialExpressionDistance.h"
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionSetMaterialAttributes.h"
 #include "MaterialDomain.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -403,15 +404,21 @@ void FMatBPImporter::WireExpressionInputs(TSharedPtr<FMatExpressionAST> ExprAST,
 			continue;
 		}
 		
-		// Find matching input by name
+		// Find matching input by name.
+		// Strategy:
+		//   1. Direct match with the raw InputAST.Name (handles Unicode / space names from Exporter)
+		//   2. KebabToCamel conversion (handles standard kebab-case names)
+		//   3. Strip spaces from UE name and compare (handles "Scale Factor" -> "ScaleFactor")
 		FString CamelName = KebabToCamel(InputAST.Name);
 		bool bConnected = false;
 		
 		for (int32 i = 0; i < NumInputs; ++i)
 		{
 			FName UEInputName = Expr->GetInputName(i);
-			if (UEInputName.ToString().Equals(CamelName, ESearchCase::IgnoreCase) ||
-				UEInputName.ToString().Replace(TEXT(" "), TEXT("")).Equals(CamelName, ESearchCase::IgnoreCase))
+			FString UENameStr = UEInputName.ToString();
+			if (UENameStr.Equals(InputAST.Name, ESearchCase::IgnoreCase) ||    // direct / Unicode
+				UENameStr.Equals(CamelName, ESearchCase::IgnoreCase) ||         // kebab-to-camel
+				UENameStr.Replace(TEXT(" "), TEXT("")).Equals(CamelName, ESearchCase::IgnoreCase)) // strip spaces
 			{
 				FExpressionInput* Input = Expr->GetInput(i);
 				if (Input)
@@ -719,16 +726,39 @@ void FMatBPImporter::SetExpressionProperties(TSharedPtr<FMatExpressionAST> ExprA
 		return;
 	}
 	
+	// ---- SetMaterialAttributes ----
+	// The 'inputs' and 'attribute-set-types' properties encode the full FExpressionInput
+	// array in a complex UObject export format that cannot be safely round-tripped via
+	// ImportText_Direct.  The actual pin connections are re-wired by WireExpressionInputs
+	// using the stored Inputs list, so we just skip those two properties here.
+	if (Expr->GetClass()->GetName() == TEXT("MaterialExpressionSetMaterialAttributes"))
+	{
+		// No additional setup needed — connections handled by WireExpressionInputs
+		return;
+	}
+
 	// ---- Generic: use FProperty reflection ----
 	UClass* ExprClass = Expr->GetClass();
+	// Properties that must not be restored via ImportText_Direct (crash-prone complex types)
+	static const TArray<FString> SkipProps = {
+		TEXT("inputs"),               // FExpressionInput array (SetMaterialAttributes)
+		TEXT("attribute-set-types"),  // FGuid array (SetMaterialAttributes)
+	};
 	for (const auto& Pair : ExprAST->Properties)
 	{
+		if (SkipProps.Contains(Pair.Key)) continue;
 		FString PropName = KebabToCamel(Pair.Key);
 		FProperty* Prop = ExprClass->FindPropertyByName(*PropName);
 		if (!Prop) continue;
 		
 		FString Value = Pair.Value;
-		Value.RemoveFromStart(TEXT("\"")); Value.RemoveFromEnd(TEXT("\""));
+		// Strip outer quotes and unescape: \" -> ", \\ -> \  (order matters)
+		if (Value.StartsWith(TEXT("\"")) && Value.EndsWith(TEXT("\"")))
+		{
+			Value = Value.Mid(1, Value.Len() - 2);
+			Value = Value.Replace(TEXT("\\\""), TEXT("\""));
+			Value = Value.Replace(TEXT("\\\\"), TEXT("\\"));
+		}
 		
 		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expr);
 		Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);

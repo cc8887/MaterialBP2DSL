@@ -68,9 +68,19 @@ FString FMatExpressionAST::ToString(int32 Indent) const
 	for (const FMatLangInput& Input : Inputs)
 	{
 		FString ValueStr = Input.ToString(Indent + 1);
-		// If the input name contains spaces, quote it: :"scale factor"
-		// so that the tokenizer reads it as a single keyword token.
-		FString KeyStr = Input.Name.Contains(TEXT(" "))
+		// If the input name contains spaces or non-ASCII characters (e.g. Chinese pin names),
+		// quote it as :"name" so the tokenizer reads it as a single keyword token.
+		bool bNeedsQuote = false;
+		for (int32 ci = 0; ci < Input.Name.Len(); ++ci)
+		{
+			TCHAR Ch = Input.Name[ci];
+			if (Ch == ' ' || Ch > 127)
+			{
+				bNeedsQuote = true;
+				break;
+			}
+		}
+		FString KeyStr = bNeedsQuote
 			? FString::Printf(TEXT("\"%s\""), *Input.Name)
 			: Input.Name;
 		Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *KeyStr, *ValueStr);
