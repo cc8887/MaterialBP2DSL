@@ -19,7 +19,7 @@ public class MatBP2FPEditor : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"MatBP2FP",            // Runtime module
-			"UnrealEd",            // Editor framework
+			"UnrealEd",            // Editor framework (UEditorLoadingAndSavingUtils)
 			"MaterialEditor",      // Material editor graph
 			"RenderCore",          // Render core types
 			"RHI",                 // RHI types
