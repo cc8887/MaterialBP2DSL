@@ -13,10 +13,14 @@ public:
 	virtual void ShutdownModule() override;
 	
 private:
-	FDelegateHandle PostEngineInitHandle;
+	// Engine init callback
+	void OnEngineInit();
 	
 	// Menu registration
 	void RegisterMenuExtensions();
+	
+	// Setup auto-sync based on settings
+	void SetupAutoSync();
 	
 	// Menu actions
 	void ExportSelectedMaterials();
@@ -25,4 +29,13 @@ private:
 	
 	// Helpers
 	FString GetOutputPath() const;
+
+	// 初始化 Material <-> DSL 映射注册表
+	void InitializeMappingRegistry();
+	
+	// Delegate handles
+	FDelegateHandle PostEngineInitHandle;
+	
+	// Compiler hook for auto-sync (owned by module)
+	TUniquePtr<class FMatBP2FPCompilerHook> CompilerHook;
 };

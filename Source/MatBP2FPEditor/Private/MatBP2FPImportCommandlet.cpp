@@ -47,7 +47,7 @@ int32 UMatBP2FPImportCommandlet::Main(const FString& Params)
 	}
 	
 	const UMatBP2FPSettings* Settings = GetDefault<UMatBP2FPSettings>();
-	FString InputPath = FPaths::ProjectDir() / Settings->ExportOutputPath;
+	FString InputPath = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP");
 	FString OutputPackagePath = TEXT("/Game/Materials/Imported/");
 	
 	if (!SpecificFile.IsEmpty())

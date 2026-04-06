@@ -120,4 +120,30 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
 	static FMatBP2FPPythonResult ValidateMaterialRoundTrip(const FString& MaterialPath);
+
+	// ========== Mapping Registry ==========
+
+	/**
+	 * Query the Material <-> DSL mapping table.
+	 * Returns all entries as a JSON string: array of objects with keys:
+	 *   material_path, dsl_file_path, state, has_material, has_dsl
+	 * State values: "Synced", "MatOnly", "DSLOnly", "OutOfSync"
+	 */
+	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
+	static FMatBP2FPPythonResult GetMappingTable();
+
+	/**
+	 * Look up a single mapping entry by Material path.
+	 * Returns the entry fields in the result struct.
+	 */
+	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
+	static FMatBP2FPPythonResult FindMappingByMaterial(const FString& MaterialPath);
+
+	/**
+	 * Convert a Material package path to its corresponding DSL file path.
+	 * Pure path conversion, no registry lookup needed.
+	 *   /Game/Props/M_Wood -> {Project}/Saved/BP2DSL/MatBP/Props/M_Wood.matlang
+	 */
+	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
+	static FMatBP2FPPythonResult MaterialPathToDSLPath(const FString& MaterialPath);
 };

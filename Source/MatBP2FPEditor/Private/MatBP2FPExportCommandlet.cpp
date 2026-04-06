@@ -3,7 +3,6 @@
 
 #include "MatBP2FPExportCommandlet.h"
 #include "MatBPExporter.h"
-#include "MatBP2FPSettings.h"
 #include "Materials/Material.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/FileHelper.h"
@@ -20,10 +19,9 @@ UMatBP2FPExportCommandlet::UMatBP2FPExportCommandlet()
 int32 UMatBP2FPExportCommandlet::Main(const FString& Params)
 {
 	UE_LOG(LogTemp, Log, TEXT("=== MatBP2FP Export Commandlet ==="));
-	
-	const UMatBP2FPSettings* Settings = GetDefault<UMatBP2FPSettings>();
-	FString OutputPath = FPaths::ProjectDir() / Settings->ExportOutputPath;
-	IFileManager::Get().MakeDirectory(*OutputPath, true);
+
+	FString OutputDir = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP");
+	IFileManager::Get().MakeDirectory(*OutputDir, true);
 	
 	// Parse params
 	TArray<FString> Tokens;
@@ -73,7 +71,16 @@ int32 UMatBP2FPExportCommandlet::Main(const FString& Params)
 		FString DSL = FMatBPExporter::ExportToString(Mat);
 		if (DSL.IsEmpty()) { Failed++; continue; }
 		
-		FString FileName = OutputPath / Mat->GetName() + TEXT(".matlang");
+		// Align with CompilerHook path convention: preserve /Game/ directory structure
+		FString PackagePath = Mat->GetPathName();
+		FString RelativePath = PackagePath.RightChop(FCString::Strlen(TEXT("/Game/")));
+		FString FileName = OutputDir / RelativePath + TEXT(".matlang");
+		
+		FString Dir = FPaths::GetPath(FileName);
+		if (!IFileManager::Get().DirectoryExists(*Dir))
+		{
+			IFileManager::Get().MakeDirectory(*Dir, true);
+		}
 		if (FFileHelper::SaveStringToFile(DSL, *FileName, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 		{
 			Exported++;

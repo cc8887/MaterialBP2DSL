@@ -1,0 +1,202 @@
+// MatBP2FPCompilerHook.cpp - Material Compilation Hook Implementation
+// Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
+
+#include "MatBP2FPCompilerHook.h"
+#include "MatBPExporter.h"
+#include "MatBP2FPSettings.h"
+#include "FMatBP2FPMappingRegistry.h"
+
+#include "Materials/Material.h"
+#include "Materials/MaterialInterface.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "Containers/Ticker.h"
+
+#define LOCTEXT_NAMESPACE "MatBP2FPCompilerHook"
+
+// ========== Lifecycle ==========
+
+FMatBP2FPCompilerHook::FMatBP2FPCompilerHook()
+{
+}
+
+FMatBP2FPCompilerHook::~FMatBP2FPCompilerHook()
+{
+	Unregister();
+}
+
+void FMatBP2FPCompilerHook::Register()
+{
+	if (bIsRegistered) return;
+
+	// Use UMaterial's OnMaterialCompilationFinished event
+	// This event provides the MaterialInterface pointer directly
+	CompilationFinishedHandle = UMaterial::OnMaterialCompilationFinished().AddRaw(
+		this, &FMatBP2FPCompilerHook::OnMaterialCompilationFinished);
+
+	// Ticker for deferred processing
+	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateRaw(this, &FMatBP2FPCompilerHook::Tick), 0.5f);
+
+	bIsRegistered = true;
+
+	UE_LOG(LogTemp, Log, TEXT("MatBP2FPCompilerHook: Registered via UMaterial::OnMaterialCompilationFinished."));
+}
+
+void FMatBP2FPCompilerHook::Unregister()
+{
+	if (!bIsRegistered) return;
+
+	if (CompilationFinishedHandle.IsValid())
+	{
+		UMaterial::OnMaterialCompilationFinished().Remove(CompilationFinishedHandle);
+		CompilationFinishedHandle.Reset();
+	}
+
+	if (TickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
+		TickerHandle.Reset();
+	}
+
+	bIsRegistered = false;
+
+	UE_LOG(LogTemp, Log, TEXT("MatBP2FPCompilerHook: Unregistered."));
+}
+
+// ========== Compilation Callback ==========
+
+void FMatBP2FPCompilerHook::OnMaterialCompilationFinished(UMaterialInterface* Material)
+{
+	if (!Material)
+	{
+		return;
+	}
+
+	// Check if auto-sync is enabled in settings
+	const UMatBP2FPSettings* Settings = GetDefault<UMatBP2FPSettings>();
+	if (!Settings || Settings->AutoSyncMode != EMatBPSyncMode::Mat2FP)
+	{
+		return;
+	}
+
+	// Only process UMaterial (not MaterialInstance)
+	UMaterial* Mat = Cast<UMaterial>(Material);
+	if (!Mat)
+	{
+		return;
+	}
+
+	FString PackagePath = Material->GetPathName();
+
+	// Enqueue for deferred processing
+	PendingAssetPaths.Enqueue(PackagePath);
+
+	UE_LOG(LogTemp, Log, TEXT("MatBP2FPCompilerHook: Material compiled, queued for export: %s"), *PackagePath);
+}
+
+// ========== Ticker / Deferred Processing ==========
+
+bool FMatBP2FPCompilerHook::Tick(float DeltaTime)
+{
+	int32 Processed = 0;
+	FString AssetPath;
+
+	while (PendingAssetPaths.Dequeue(AssetPath) && Processed < MaxPerTick)
+	{
+		ProcessQueuedMaterial(AssetPath);
+		Processed++;
+	}
+
+	// Return true to keep ticking
+	return true;
+}
+
+void FMatBP2FPCompilerHook::ProcessQueuedMaterial(const FString& AssetPath)
+{
+	UE_LOG(LogTemp, Log, TEXT("MatBP2FPCompilerHook: Processing compiled Material: %s"), *AssetPath);
+
+	// Load the material asset
+	UMaterialInterface* MaterialInterface = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *AssetPath));
+	if (!MaterialInterface)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPCompilerHook: Failed to load material: %s"), *AssetPath);
+		return;
+	}
+
+	UMaterial* Material = Cast<UMaterial>(MaterialInterface);
+	if (!Material)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPCompilerHook: Not a UMaterial: %s"), *AssetPath);
+		return;
+	}
+
+	// Export Material to .matlang
+	ExportMaterial(Material);
+}
+
+// ========== Export Functions ==========
+
+void FMatBP2FPCompilerHook::ExportMaterial(UMaterialInterface* Material)
+{
+	if (!Material) return;
+
+	// Build output path aligned with AnimBP convention:
+	// /Game/Props/M_Wood -> {Project}/Saved/BP2DSL/MatBP/Props/M_Wood.matlang
+	FString PackagePath = Material->GetPathName();
+
+
+	// /Game/Props/M_Wood -> Props/M_Wood
+	FString RelativePath = PackagePath;
+
+	FString OutputFile = FPaths::ProjectDir() /
+		TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP") / RelativePath + TEXT(".matlang");
+
+	// Ensure directory exists
+	FString Dir = FPaths::GetPath(OutputFile);
+	if (!IFileManager::Get().DirectoryExists(*Dir))
+	{
+		IFileManager::Get().MakeDirectory(*Dir, true);
+	}
+
+	// Export to DSL
+#if WITH_EDITOR
+	UMaterial* Mat = Cast<UMaterial>(Material);
+	if (!Mat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPCompilerHook: Cannot export non-UMaterial: %s"), *Material->GetPathName());
+		return;
+	}
+
+	FString DSL = FMatBPExporter::ExportToString(Mat);
+
+	if (DSL.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPCompilerHook: Material export produced empty output for %s"), *Material->GetPathName());
+		return;
+	}
+
+	// Add header comment
+	FString FileContent = FString::Printf(
+		TEXT(";; MatLang DSL Export (auto-synced)\n")
+		TEXT(";; Source: %s\n")
+		TEXT(";; Generated by MatBP2FP CompilerHook\n")
+		TEXT(";;\n\n%s\n"),
+		*Material->GetPathName(), *DSL);
+
+	if (FFileHelper::SaveStringToFile(FileContent, *OutputFile, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogTemp, Log, TEXT("MatBP2FPCompilerHook: Exported Material -> %s"), *OutputFile);
+
+		// Update mapping registry
+		FMatBP2FPMappingRegistry::Get().MarkExported(Material->GetPathName(), DSL);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("MatBP2FPCompilerHook: Failed to write %s"), *OutputFile);
+	}
+#endif // WITH_EDITOR
+}
+
+#undef LOCTEXT_NAMESPACE

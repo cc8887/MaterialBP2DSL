@@ -8,6 +8,20 @@
 #include "MatBP2FPSettings.generated.h"
 
 /**
+ * Auto-sync mode for MatBP2FP
+ */
+UENUM()
+enum class EMatBPSyncMode : uint8
+{
+	/** No automatic sync */
+	None,
+	/** Material compile -> auto export to .matlang */
+	Mat2FP,
+	/** .matlang file change -> auto import to Material (not yet implemented) */
+	FP2Mat
+};
+
+/**
  * MatBP2FP Project Settings
  * Location: Edit → Project Settings → Plugins → MatBP2FP
  */
@@ -19,12 +33,14 @@ class MATBP2FPEDITOR_API UMatBP2FPSettings : public UDeveloperSettings
 public:
 	UMatBP2FPSettings();
 	
-	// ========== Export Options ==========
+	// ========== Auto Sync Settings ==========
 	
-	/** Output directory for exported .matlang files (relative to project root) */
-	UPROPERTY(Config, EditAnywhere, Category="Export Options",
-		meta=(DisplayName="Export Output Path"))
-	FString ExportOutputPath;
+	/** Auto-sync direction: None disables sync, Mat2FP exports on compile, FP2Mat imports on file change */
+	UPROPERTY(Config, EditAnywhere, Category="Auto Sync",
+		meta=(DisplayName="Auto Sync Mode"))
+	EMatBPSyncMode AutoSyncMode;
+	
+	// ========== Export Options ==========
 	
 	/** Include expression editor positions in DSL output */
 	UPROPERTY(Config, EditAnywhere, Category="Export Options",

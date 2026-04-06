@@ -6,6 +6,7 @@
 #include "MatBPExporter.h"
 #include "MatBPImporter.h"
 #include "MatLangRoundTrip.h"
+#include "FMatBP2FPMappingRegistry.h"
 #include "Materials/Material.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
@@ -300,5 +301,93 @@ FMatBP2FPPythonResult UMatBP2FPPythonBridge::ValidateMaterialRoundTrip(const FSt
 		RoundTrip.DiffLines,
 		RoundTrip.TotalLines,
 		*RoundTrip.MaterialName);
+	return Result;
+}
+
+// ========== Mapping Registry ==========
+
+FMatBP2FPPythonResult UMatBP2FPPythonBridge::GetMappingTable()
+{
+	FMatBP2FPMappingRegistry& Registry = FMatBP2FPMappingRegistry::Get();
+
+	FMatBP2FPPythonResult Result;
+	Result.bSuccess = true;
+
+	// Build JSON array of all entries
+	TArray<FString> JsonEntries;
+	for (const FMatBP2FPMappingEntry& Entry : Registry.GetAllEntries())
+	{
+		FString StateStr;
+		switch (Entry.State)
+		{
+		case EMatBPSyncState::Synced:    StateStr = TEXT("Synced");    break;
+		case EMatBPSyncState::MatOnly:   StateStr = TEXT("MatOnly");   break;
+		case EMatBPSyncState::DSLOnly:   StateStr = TEXT("DSLOnly");   break;
+		case EMatBPSyncState::OutOfSync: StateStr = TEXT("OutOfSync"); break;
+		}
+
+		JsonEntries.Add(FString::Printf(
+			TEXT("{\"material_path\":\"%s\",\"dsl_file_path\":\"%s\",\"state\":\"%s\",\"has_material\":%s,\"has_dsl\":%s}"),
+			*Entry.MaterialPath,
+			*Entry.DSLFilePath,
+			*StateStr,
+			Entry.bMaterialExists ? TEXT("true") : TEXT("false"),
+			Entry.bDSLFileExists ? TEXT("true") : TEXT("false")
+		));
+	}
+
+	Result.DSLText = TEXT("[") + FString::Join(JsonEntries, TEXT(",")) + TEXT("]");
+	Result.Message = FString::Printf(TEXT("Mapping table: %d entries"), Registry.Num());
+	return Result;
+}
+
+FMatBP2FPPythonResult UMatBP2FPPythonBridge::FindMappingByMaterial(const FString& MaterialPath)
+{
+	FMatBP2FPMappingRegistry& Registry = FMatBP2FPMappingRegistry::Get();
+	const FMatBP2FPMappingEntry* Entry = Registry.FindByMaterial(MaterialPath);
+
+	if (!Entry)
+	{
+		FMatBP2FPPythonResult Result;
+		Result.bSuccess = false;
+		Result.Message = FString::Printf(TEXT("No mapping found for: %s"), *MaterialPath);
+		return Result;
+	}
+
+	FString StateStr;
+	switch (Entry->State)
+	{
+	case EMatBPSyncState::Synced:    StateStr = TEXT("Synced");    break;
+	case EMatBPSyncState::MatOnly:   StateStr = TEXT("MatOnly");   break;
+	case EMatBPSyncState::DSLOnly:   StateStr = TEXT("DSLOnly");   break;
+	case EMatBPSyncState::OutOfSync: StateStr = TEXT("OutOfSync"); break;
+	}
+
+	FMatBP2FPPythonResult Result;
+	Result.bSuccess = true;
+	Result.AssetPath = Entry->MaterialPath;
+	Result.FilePath = Entry->DSLFilePath;
+	Result.Message = FString::Printf(TEXT("State: %s | Material: %s | DSL: %s"),
+		*StateStr, Entry->bMaterialExists ? TEXT("yes") : TEXT("no"), Entry->bDSLFileExists ? TEXT("yes") : TEXT("no"));
+	return Result;
+}
+
+FMatBP2FPPythonResult UMatBP2FPPythonBridge::MaterialPathToDSLPath(const FString& MaterialPath)
+{
+	FString DSLPath = FMatBP2FPMappingRegistry::MaterialToDSLPath(MaterialPath);
+
+	if (DSLPath.IsEmpty())
+	{
+		FMatBP2FPPythonResult Result;
+		Result.bSuccess = false;
+		Result.Message = FString::Printf(TEXT("Invalid material path (must start with /Game/): %s"), *MaterialPath);
+		return Result;
+	}
+
+	FMatBP2FPPythonResult Result;
+	Result.bSuccess = true;
+	Result.AssetPath = MaterialPath;
+	Result.FilePath = DSLPath;
+	Result.Message = FString::Printf(TEXT("%s -> %s"), *MaterialPath, *DSLPath);
 	return Result;
 }

@@ -4,7 +4,7 @@
 #include "MatBP2FPSettings.h"
 
 UMatBP2FPSettings::UMatBP2FPSettings()
-	: ExportOutputPath(TEXT("MatLang/Exported"))
+	: AutoSyncMode(EMatBPSyncMode::None)  // Default off, manual enable
 	, bIncludeEditorPositions(false)
 	, bIncludeComments(true)
 	, bAutoCompileAfterImport(true)
