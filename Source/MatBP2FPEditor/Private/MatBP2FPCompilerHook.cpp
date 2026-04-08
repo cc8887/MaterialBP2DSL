@@ -142,16 +142,14 @@ void FMatBP2FPCompilerHook::ExportMaterial(UMaterialInterface* Material)
 {
 	if (!Material) return;
 
-	// Build output path aligned with AnimBP convention:
-	// /Game/Props/M_Wood -> {Project}/Saved/BP2DSL/MatBP/Props/M_Wood.matlang
+	// Build output path via registry (dynamically handles any mount point)
 	FString PackagePath = Material->GetPathName();
-
-
-	// /Game/Props/M_Wood -> Props/M_Wood
-	FString RelativePath = PackagePath;
-
-	FString OutputFile = FPaths::ProjectDir() /
-		TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP") / RelativePath + TEXT(".matlang");
+	FString OutputFile = FMatBP2FPMappingRegistry::MaterialToDSLPath(PackagePath);
+	if (OutputFile.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPCompilerHook: Cannot resolve DSL path for %s (engine/system content?)"), *PackagePath);
+		return;
+	}
 
 	// Ensure directory exists
 	FString Dir = FPaths::GetPath(OutputFile);

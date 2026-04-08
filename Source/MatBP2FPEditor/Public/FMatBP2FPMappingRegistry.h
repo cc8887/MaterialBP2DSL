@@ -50,8 +50,16 @@ public:
 	// ========== Path Conversion ==========
 
 	/**
+	 * Check if a package path belongs to an exportable content root.
+	 * Returns true for /Game/, plugin mount points, etc.
+	 * Returns false for /Engine/, /Script/, /Temp/, /Transient/.
+	 */
+	static bool IsExportablePackage(const FString& PackagePath);
+
+	/**
 	 * Convert a Material package path to the corresponding DSL file path.
 	 * Convention: /Game/Path/M_Material -> {ProjectDir}/Saved/BP2DSL/MatBP/Path/M_Material.matlang
+	 * Also works with custom mount points: /MyPlugin/Path/M_Material -> .../MatBP/Path/M_Material.matlang
 	 *
 	 * @param MaterialPath  Package path, e.g. /Game/Props/M_Wood
 	 * @return Absolute DSL file path, or empty string if MaterialPath is invalid
@@ -61,6 +69,12 @@ public:
 	/**
 	 * Convert a DSL file path back to the Material package path.
 	 * Inverse of MaterialToDSLPath().
+	 *
+	 * Resolution strategy:
+	 * 1. Extract asset name from DSL file path, query AssetRegistry for exact match.
+	 *    If exactly one matching material is found, returns its real PackagePath
+	 *    (preserving the original mount point, e.g. /MyPlugin/Props/M_Wood).
+	 * 2. If no match or ambiguous, falls back to /Game/ prefix and logs a Warning.
 	 *
 	 * @param DSLFilePath  Absolute DSL file path
 	 * @return Package path (e.g. /Game/Props/M_Wood), or empty string if not a valid DSL path

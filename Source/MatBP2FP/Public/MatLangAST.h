@@ -161,6 +161,13 @@ struct MATBP2FP_API FMatParameterDef
 	FString ToString() const;
 };
 
+// ---- Graph Kind ----
+enum class EMatLangGraphKind : uint8
+{
+	Material,           // UMaterial
+	MaterialFunction    // UMaterialFunction
+};
+
 /**
  * Complete Material AST — the full material graph
  * DSL: (material "Name" :domain ... :blend-mode ... (expressions ...) (outputs ...))
@@ -168,20 +175,25 @@ struct MATBP2FP_API FMatParameterDef
 struct MATBP2FP_API FMaterialGraphAST
 {
 	FString Name;
-	
-	// Material properties
-	EMatLangDomain Domain;
-	EMatLangBlendMode BlendMode;
-	EMatLangShadingModel ShadingModel;
-	bool bTwoSided;
-	bool bIsMasked;
-	float OpacityMaskClipValue;
+	EMatLangGraphKind Kind = EMatLangGraphKind::Material;
+
+	// Material properties (only valid when Kind == Material)
+	EMatLangDomain Domain = EMatLangDomain::Surface;
+	EMatLangBlendMode BlendMode = EMatLangBlendMode::Opaque;
+	EMatLangShadingModel ShadingModel = EMatLangShadingModel::DefaultLit;
+	bool bTwoSided = false;
+	bool bIsMasked = false;
+	float OpacityMaskClipValue = 0.0f;
 	
 	// Expression nodes (ordered — topological or editor-order)
 	TArray<TSharedPtr<FMatExpressionAST>> Expressions;
-	
+
 	// Material outputs (connection to material result node)
 	FMatOutputsAST Outputs;
+
+	// Material Function inputs/outputs (only valid when Kind == MaterialFunction)
+	TArray<FMatParameterDef> FunctionInputs;
+	TArray<FMatParameterDef> FunctionOutputs;
 	
 	// Extracted parameters (convenience, derived from Parameter expressions)
 	TArray<FMatParameterDef> Parameters;

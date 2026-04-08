@@ -8,6 +8,7 @@
 
 class UMaterial;
 class UMaterialExpression;
+class UMaterialFunction;
 
 /**
  * Exports a UMaterial to MatLang DSL
@@ -22,7 +23,14 @@ public:
 	 * @return DSL string representation, or empty on failure
 	 */
 	static FString ExportToString(UMaterial* Material);
-	
+
+	/**
+	 * Export a material function to DSL string
+	 * @param MaterialFunction The material function to export
+	 * @return DSL string representation, or empty on failure
+	 */
+	static FString ExportMaterialFunctionToString(UMaterialFunction* MaterialFunction);
+
 	/**
 	 * Export a material to AST
 	 * @param Material The material to export
@@ -30,15 +38,27 @@ public:
 	 */
 	static TSharedPtr<FMaterialGraphAST> ExportToAST(UMaterial* Material);
 
+	/**
+	 * Export a material function to AST
+	 * @param MaterialFunction The material function to export
+	 * @return Material AST with Kind=MaterialFunction, or nullptr on failure
+	 */
+	static TSharedPtr<FMaterialGraphAST> ExportMaterialFunctionToAST(UMaterialFunction* MaterialFunction);
+
 #if WITH_EDITOR
 private:
 	UMaterial* Material;
 	TMap<UMaterialExpression*, FString> ExprToId;  // Expression pointer -> $id mapping
 	int32 IdCounter;
-	
+
 	FMatBPExporter(UMaterial* InMaterial);
-	
+
 	TSharedPtr<FMaterialGraphAST> Export();
+
+	// MaterialFunction support
+	UMaterialFunction* Function;
+	FMatBPExporter(UMaterialFunction* InFunction);
+	TSharedPtr<FMaterialGraphAST> ExportFunction();
 	
 	// Get or assign a unique ID for an expression
 	FString GetOrAssignId(UMaterialExpression* Expr);

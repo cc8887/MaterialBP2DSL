@@ -87,6 +87,17 @@ public:
 	static FMatBP2FPPythonResult ExportMaterialToFile(const FString& MaterialPath, const FString& OutputFilePath);
 
 	/**
+	 * Export a UMaterial asset to a .matlang file, including all referenced
+	 * Material Functions (recursively). Each function is exported to its own
+	 * .matlang file at {OutputDir}/{/Game/ relative path}.matlang.
+	 *
+	 * Returns the main material result; the full list of exported files
+	 * (material + all functions) is returned in Message.
+	 */
+	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
+	static FMatBP2FPPythonResult ExportMaterialWithDependenciesToFile(const FString& MaterialPath, const FString& OutputDir);
+
+	/**
 	 * Import MatLang DSL text as a new UMaterial asset.
 	 * DestinationFolder should be a content folder such as /Game/Materials/Imported.
 	 * The created asset name comes from the :name field in the DSL.

@@ -3,6 +3,7 @@
 
 #include "MatBP2FPRoundTripCommandlet.h"
 #include "MatLangRoundTrip.h"
+#include "FMatBP2FPMappingRegistry.h"
 #include "Materials/Material.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
@@ -30,7 +31,7 @@ int32 UMatBP2FPRoundTripCommandlet::Main(const FString& Params)
 	
 	for (const FAssetData& Asset : MaterialAssets)
 	{
-		if (!Asset.PackageName.ToString().StartsWith(TEXT("/Game/")))
+		if (!FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
 		{
 			continue;
 		}

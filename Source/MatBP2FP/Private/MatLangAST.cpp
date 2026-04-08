@@ -175,7 +175,8 @@ FString FMatParameterDef::ToString() const
 // ========== FMaterialGraphAST ==========
 
 FMaterialGraphAST::FMaterialGraphAST()
-	: Domain(EMatLangDomain::Surface)
+	: Kind(EMatLangGraphKind::Material)
+	, Domain(EMatLangDomain::Surface)
 	, BlendMode(EMatLangBlendMode::Opaque)
 	, ShadingModel(EMatLangShadingModel::DefaultLit)
 	, bTwoSided(false)
@@ -186,6 +187,47 @@ FMaterialGraphAST::FMaterialGraphAST()
 
 FString FMaterialGraphAST::ToString() const
 {
+	if (Kind == EMatLangGraphKind::MaterialFunction)
+	{
+		// MaterialFunction format: (material-function "Name" (function-inputs ...) (function-outputs ...) (expressions ...) (outputs ...))
+		FString Result = FString::Printf(TEXT("(material-function \"%s\"\n"), *Name);
+
+		if (FunctionInputs.Num() > 0)
+		{
+			Result += TEXT("  (function-inputs\n");
+			for (const FMatParameterDef& Input : FunctionInputs)
+			{
+				Result += FString::Printf(TEXT("    %s\n"), *Input.ToString());
+			}
+			Result += TEXT("  )\n");
+		}
+
+		if (FunctionOutputs.Num() > 0)
+		{
+			Result += TEXT("  (function-outputs\n");
+			for (const FMatParameterDef& Output : FunctionOutputs)
+			{
+				Result += FString::Printf(TEXT("    %s\n"), *Output.ToString());
+			}
+			Result += TEXT("  )\n");
+		}
+
+		// Expressions
+		Result += TEXT("  (expressions\n");
+		for (const auto& Expr : Expressions)
+		{
+			Result += Expr->ToString(2) + TEXT("\n");
+		}
+		Result += TEXT("  )\n");
+
+		// Outputs
+		Result += Outputs.ToString(1) + TEXT("\n");
+
+		Result += TEXT(")");
+		return Result;
+	}
+
+	// Material format (original)
 	FString Result = FString::Printf(TEXT("(material \"%s\"\n"), *Name);
 	Result += FString::Printf(TEXT("  :domain %s\n"), *MatLangEnums::DomainToString(Domain));
 	Result += FString::Printf(TEXT("  :blend-mode %s\n"), *MatLangEnums::BlendModeToString(BlendMode));

@@ -146,11 +146,11 @@ void FMatBP2FPEditorModule::ExportAllMaterials()
 	TArray<FAssetData> MaterialAssets;
 	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets, true);
 	
-	// Filter to game content only
+	// Filter to exportable content only (not engine/system paths)
 	TArray<FAssetData> GameMaterials;
 	for (const FAssetData& Asset : MaterialAssets)
 	{
-		if (Asset.PackageName.ToString().StartsWith(TEXT("/Game/")))
+		if (FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
 		{
 			GameMaterials.Add(Asset);
 		}
@@ -167,10 +167,14 @@ void FMatBP2FPEditorModule::ExportAllMaterials()
 		FString DSL = FMatBPExporter::ExportToString(Mat);
 		if (DSL.IsEmpty()) { Failed++; continue; }
 		
-		// Align with CompilerHook path convention: preserve /Game/ directory structure
+		// Use unified path convention via registry
 		FString PackagePath = Mat->GetPathName();
-		FString RelativePath = PackagePath.RightChop(FCString::Strlen(TEXT("/Game/")));
-		FString FileName = OutputDir / RelativePath + TEXT(".matlang");
+		FString FileName = FMatBP2FPMappingRegistry::MaterialToDSLPath(PackagePath);
+		if (FileName.IsEmpty())
+		{
+			Failed++;
+			continue;
+		}
 		
 		FString Dir = FPaths::GetPath(FileName);
 		if (!IFileManager::Get().DirectoryExists(*Dir))
@@ -203,11 +207,11 @@ void FMatBP2FPEditorModule::RunRoundTripValidation()
 	TArray<FAssetData> MaterialAssets;
 	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets, true);
 	
-	// Filter to game content
+	// Filter to exportable content (not engine/system paths)
 	TArray<FAssetData> GameMaterials;
 	for (const FAssetData& Asset : MaterialAssets)
 	{
-		if (Asset.PackageName.ToString().StartsWith(TEXT("/Game/")))
+		if (FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
 		{
 			GameMaterials.Add(Asset);
 		}

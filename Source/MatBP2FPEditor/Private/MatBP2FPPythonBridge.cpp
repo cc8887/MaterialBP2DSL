@@ -8,6 +8,8 @@
 #include "MatLangRoundTrip.h"
 #include "FMatBP2FPMappingRegistry.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialFunction.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -149,6 +151,144 @@ FMatBP2FPPythonResult UMatBP2FPPythonBridge::ExportMaterialToFile(const FString&
 	}
 	Result.FilePath = OutputFilePath;
 	Result.Message = FString::Printf(TEXT("Exported Material to file: %s"), *OutputFilePath);
+	return Result;
+}
+
+// ========== Export with Dependencies ==========
+
+namespace
+{
+	/** Recursively collect all MaterialFunctions referenced by a material or function */
+	void CollectMaterialFunctionDependencies(
+		const TConstArrayView<TObjectPtr<UMaterialExpression>>& Expressions,
+		TSet<TObjectPtr<UMaterialFunctionInterface>>& OutVisited,
+		TArray<TObjectPtr<UMaterialFunctionInterface>>& OutOrder)
+	{
+		for (UMaterialExpression* Expr : Expressions)
+		{
+			if (auto* MFC = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
+			{
+				if (MFC->MaterialFunction && !OutVisited.Contains(MFC->MaterialFunction))
+				{
+					OutVisited.Add(MFC->MaterialFunction);
+					OutOrder.Add(MFC->MaterialFunction);
+					// Recurse into the function's own expressions
+					CollectMaterialFunctionDependencies(MFC->MaterialFunction->GetExpressions(), OutVisited, OutOrder);
+				}
+			}
+		}
+	}
+
+	/** Convert asset object path to output dir subpath: OutputDir/Path/Name.matlang */
+	FString AssetPathToOutputFile(const FString& AssetObjectPath, const FString& OutputDir)
+	{
+		// Use registry for proper mount point handling
+		FString PackagePath = FMatBP2FPMappingRegistry::MaterialToDSLPath(AssetObjectPath);
+		if (!PackagePath.IsEmpty())
+		{
+			return PackagePath;
+		}
+		// Fallback: strip first mount point
+		FString PkgPath = FPackageName::ObjectPathToPackageName(AssetObjectPath);
+		FString Relative = PkgPath.RightChop(PkgPath.Find(TEXT("/"), ESearchCase::IgnoreCase, ESearchDir::FromStart, 1) + 1);
+		return OutputDir / Relative + TEXT(".matlang");
+	}
+}
+
+FMatBP2FPPythonResult UMatBP2FPPythonBridge::ExportMaterialWithDependenciesToFile(
+	const FString& MaterialPath, const FString& OutputDir)
+{
+	if (OutputDir.TrimStartAndEnd().IsEmpty())
+	{
+		return MatBP2FPBridge::MakeFailure(TEXT("OutputDir is empty"));
+	}
+
+	// Load the main material
+	FString ResolvedPath;
+	FString Error;
+	UMaterial* Mat = MatBP2FPBridge::LoadMaterialByPath(MaterialPath, ResolvedPath, Error);
+	if (!Mat)
+	{
+		return MatBP2FPBridge::MakeFailure(Error);
+	}
+
+	TArray<FString> ExportedFiles;
+	TArray<FString> FailedFiles;
+
+	// 1. Recursively collect all referenced MaterialFunctions
+	TSet<TObjectPtr<UMaterialFunctionInterface>> Visited;
+	TArray<TObjectPtr<UMaterialFunctionInterface>> DepFunctions;
+	CollectMaterialFunctionDependencies(Mat->GetExpressions(), Visited, DepFunctions);
+
+	// 2. Export each MaterialFunction (dependencies first, topological order)
+	for (auto Func : DepFunctions)
+	{
+		auto MatFunc = Cast<UMaterialFunction>(Func);
+		if (!IsValid(MatFunc))
+		{
+			FailedFiles.Add(FString::Printf(TEXT("[FAIL] Cast UMaterialFunction Failed %s"), *Func->GetPathName()));
+			continue;
+		}
+		FString FuncDSL = FMatBPExporter::ExportMaterialFunctionToString(MatFunc);
+		if (FuncDSL.IsEmpty())
+		{
+			FailedFiles.Add(FString::Printf(TEXT("[FAIL] %s"), *Func->GetPathName()));
+			continue;
+		}
+
+		FString FuncOutputPath = AssetPathToOutputFile(Func->GetPathName(), OutputDir);
+		FString WriteError;
+		if (MatBP2FPBridge::WriteTextFile(FuncOutputPath, FuncDSL, WriteError))
+		{
+			ExportedFiles.Add(FString::Printf(TEXT("[OK] %s -> %s"), *Func->GetName(), *FuncOutputPath));
+			// Note: MaterialFunction not tracked in registry (registry only scans UMaterial)
+		}
+		else
+		{
+			FailedFiles.Add(FString::Printf(TEXT("[FAIL] %s: %s"), *Func->GetName(), *WriteError));
+		}
+	}
+
+	// 3. Export the main material
+	FString MaterialDSL = FMatBPExporter::ExportToString(Mat);
+	if (!MaterialDSL.IsEmpty())
+	{
+		FString MaterialOutputPath = AssetPathToOutputFile(ResolvedPath, OutputDir);
+		FString WriteError;
+		if (MatBP2FPBridge::WriteTextFile(MaterialOutputPath, MaterialDSL, WriteError))
+		{
+			ExportedFiles.Add(FString::Printf(TEXT("[OK] %s -> %s"), *Mat->GetName(), *MaterialOutputPath));
+			FMatBP2FPMappingRegistry::Get().MarkExported(ResolvedPath, MaterialDSL);
+		}
+		else
+		{
+			FailedFiles.Add(FString::Printf(TEXT("[FAIL] %s: %s"), *Mat->GetName(), *WriteError));
+		}
+	}
+	else
+	{
+		FailedFiles.Add(FString::Printf(TEXT("[FAIL] %s: export produced empty DSL"), *Mat->GetName()));
+	}
+
+	// Build result
+	FMatBP2FPPythonResult Result;
+	Result.bSuccess = FailedFiles.Num() == 0;
+	Result.AssetPath = ResolvedPath;
+	Result.DSLText = MaterialDSL;
+
+	// Summary message
+	FString Summary = FString::Printf(TEXT("Exported %s with dependencies: %d files exported, %d failed"),
+		*Mat->GetName(), ExportedFiles.Num(), FailedFiles.Num());
+	if (ExportedFiles.Num() > 0)
+	{
+		Summary += TEXT("\nExported:\n") + FString::Join(ExportedFiles, TEXT("\n"));
+	}
+	if (FailedFiles.Num() > 0)
+	{
+		Summary += TEXT("\nFailed:\n") + FString::Join(FailedFiles, TEXT("\n"));
+	}
+	Result.Message = Summary;
+
 	return Result;
 }
 
@@ -380,7 +520,7 @@ FMatBP2FPPythonResult UMatBP2FPPythonBridge::MaterialPathToDSLPath(const FString
 	{
 		FMatBP2FPPythonResult Result;
 		Result.bSuccess = false;
-		Result.Message = FString::Printf(TEXT("Invalid material path (must start with /Game/): %s"), *MaterialPath);
+		Result.Message = FString::Printf(TEXT("Invalid material path (engine/system content not exportable): %s"), *MaterialPath);
 		return Result;
 	}
 

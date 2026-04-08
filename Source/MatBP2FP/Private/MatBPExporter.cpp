@@ -54,6 +54,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPExporter, Log, All);
 #include "Materials/MaterialExpressionDistance.h"
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialFunction.h"
 #include "MaterialDomain.h"
 
 // ========== Public API ==========
@@ -512,6 +513,92 @@ void FMatBPExporter::ExportOutputs(TSharedPtr<FMaterialGraphAST> AST)
 	}
 }
 
+// ========== MaterialFunction Export ==========
+
+FMatBPExporter::FMatBPExporter(UMaterialFunction* InFunction)
+	: Material(nullptr)
+	, Function(InFunction)
+	, IdCounter(0)
+{
+}
+
+TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
+{
+	auto AST = MakeShared<FMaterialGraphAST>();
+	AST->Name = Function->GetName();
+	AST->Kind = EMatLangGraphKind::MaterialFunction;
+
+#if WITH_EDITOR
+	// Export function inputs via GetInputsAndOutputs
+	TArray<FFunctionExpressionInput> FuncInputs;
+	TArray<FFunctionExpressionOutput> FuncOutputs;
+	Function->GetInputsAndOutputs(FuncInputs, FuncOutputs);
+
+	for (const FFunctionExpressionInput& FuncInput : FuncInputs)
+	{
+		if (FuncInput.ExpressionInput)
+		{
+			FMatParameterDef InputDef;
+			InputDef.Name = FuncInput.ExpressionInput->GetName();
+			InputDef.SortPriority = 0;
+			InputDef.DefaultValue = TEXT("");
+			AST->FunctionInputs.Add(InputDef);
+		}
+	}
+
+	for (const FFunctionExpressionOutput& FuncOutput : FuncOutputs)
+	{
+		if (FuncOutput.ExpressionOutput)
+		{
+			FMatParameterDef OutputDef;
+			OutputDef.Name = FuncOutput.ExpressionOutput->GetName();
+			AST->FunctionOutputs.Add(OutputDef);
+		}
+	}
+#endif
+
+	// First pass: assign IDs to all expressions
+	for (UMaterialExpression* Expr : Function->GetExpressions())
+	{
+		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
+		{
+			GetOrAssignId(Expr);
+		}
+	}
+
+	// Second pass: export all expressions
+	// FunctionInput and FunctionOutput nodes are part of the graph too
+	for (UMaterialExpression* Expr : Function->GetExpressions())
+	{
+		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
+		{
+			auto ExprAST = ExportExpression(Expr);
+			if (ExprAST)
+			{
+				AST->Expressions.Add(ExprAST);
+			}
+		}
+	}
+
+	UE_LOG(LogMatBPExporter, Log, TEXT("Exported material function '%s': %d expressions, %d inputs, %d outputs"),
+		*AST->Name, AST->Expressions.Num(), AST->FunctionInputs.Num(), AST->FunctionOutputs.Num());
+
+	return AST;
+}
+
+FString FMatBPExporter::ExportMaterialFunctionToString(UMaterialFunction* MaterialFunction)
+{
+	auto AST = ExportMaterialFunctionToAST(MaterialFunction);
+	return AST ? AST->ToString() : TEXT("");
+}
+
+TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportMaterialFunctionToAST(UMaterialFunction* MaterialFunction)
+{
+	if (!MaterialFunction) return nullptr;
+	FMatBPExporter Exporter(MaterialFunction);
+	return Exporter.ExportFunction();
+}
+
 // ========== Enum Mapping ==========
 
 EMatLangDomain FMatBPExporter::MapDomain(int32 UEDomain)
@@ -573,6 +660,18 @@ FString FMatBPExporter::ExportToString(UMaterial* Material)
 }
 
 TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportToAST(UMaterial* Material)
+{
+	UE_LOG(LogMatBPExporter, Error, TEXT("Material export is only available in editor builds"));
+	return nullptr;
+}
+
+FString FMatBPExporter::ExportMaterialFunctionToString(UMaterialFunction* MaterialFunction)
+{
+	UE_LOG(LogMatBPExporter, Error, TEXT("Material export is only available in editor builds"));
+	return TEXT("");
+}
+
+TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportMaterialFunctionToAST(UMaterialFunction* MaterialFunction)
 {
 	UE_LOG(LogMatBPExporter, Error, TEXT("Material export is only available in editor builds"));
 	return nullptr;

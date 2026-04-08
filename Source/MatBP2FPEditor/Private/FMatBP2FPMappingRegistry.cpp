@@ -67,17 +67,66 @@ const FMatBP2FPMappingEntry* FMatBP2FPMappingRegistry::FindByDSLFile(const FStri
 	return &Entries[*IndexPtr];
 }
 
-// ========== Path Conversion ==========
+// ========== Path Conversion (Internal Helpers) ==========
+
+namespace
+{
+	// Strip the content root mount point prefix from a UE package path.
+	// e.g., /Game/Props/M_Wood.M_Wood -> Props/M_Wood.M_Wood
+	//        /MyPlugin/Props/M_Wood.M_Wood -> Props/M_Wood.M_Wood
+	// Returns empty string for system mount points (/Engine/, /Script/, etc.).
+	FString StripContentRootPrefix(const FString& PackagePath)
+	{
+		if (PackagePath.IsEmpty() || !PackagePath.StartsWith(TEXT("/")))
+		{
+			return FString();
+		}
+
+		// Find the second '/' which marks the end of the mount point
+		int32 SecondSlash = PackagePath.Find(TEXT("/"), ESearchCase::IgnoreCase, ESearchDir::FromStart, 1);
+		if (SecondSlash <= 0)
+		{
+			return FString();
+		}
+
+		// Extract mount point name (between first and second slash)
+		FString MountPoint = PackagePath.Mid(1, SecondSlash - 1);
+
+		// Skip system/engine mount points that should not be exported
+		if (MountPoint == TEXT("Engine") ||
+			MountPoint == TEXT("Script") ||
+			MountPoint == TEXT("Temp") ||
+			MountPoint == TEXT("Transient"))
+		{
+			return FString();
+		}
+
+		// Return everything after the mount point: "Props/M_Wood.M_Wood"
+		return PackagePath.RightChop(SecondSlash + 1);
+	}
+}
+
+// ========== Path Conversion (Public) ==========
+
+bool FMatBP2FPMappingRegistry::IsExportablePackage(const FString& PackagePath)
+{
+	return !StripContentRootPrefix(PackagePath).IsEmpty();
+}
 
 FString FMatBP2FPMappingRegistry::MaterialToDSLPath(const FString& MaterialPath)
 {
-	if (MaterialPath.IsEmpty() || !MaterialPath.StartsWith(TEXT("/Game/")))
+	if (MaterialPath.IsEmpty())
 	{
 		return FString();
 	}
 
-	// /Game/Path/M_Material -> Path/M_Material
-	FString RelativePath = MaterialPath.RightChop(FCString::Strlen(TEXT("/Game/")));
+	// Dynamically strip any content root prefix (e.g., /Game/, /MyPlugin/)
+	// Returns empty for engine/system paths
+	FString RelativePath = StripContentRootPrefix(MaterialPath);
+	if (RelativePath.IsEmpty())
+	{
+		return FString();
+	}
 
 	// {ProjectDir}/Saved/BP2DSL/MatBP/Path/M_Material.matlang
 	FString DSLPath = FPaths::ProjectDir() /
@@ -102,9 +151,41 @@ FString FMatBP2FPMappingRegistry::DSLToMaterialPath(const FString& DSLFilePath)
 
 	// Strip prefix: Path/M_Material.matlang
 	FString RelativePath = DSLFilePath.RightChop(ExpectedPrefix.Len());
+	FString AssetName = FPaths::GetBaseFilename(RelativePath);
 
-	// /Game/Path/M_Material
-	return TEXT("/Game/") + FPaths::GetPath(RelativePath) / FPaths::GetBaseFilename(RelativePath);
+	// Phase 1: Try to resolve via AssetRegistry (supports any mount point)
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	TArray<FAssetData> AllMaterials;
+	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), AllMaterials);
+
+	TArray<FString> Candidates;
+	for (const FAssetData& Asset : AllMaterials)
+	{
+		if (Asset.AssetName.ToString() == AssetName && IsExportablePackage(Asset.PackageName.ToString()))
+		{
+			Candidates.Add(Asset.PackageName.ToString());
+		}
+	}
+
+	if (Candidates.Num() == 1)
+	{
+		return Candidates[0];
+	}
+	else if (Candidates.Num() > 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPMappingRegistry: DSLToMaterialPath: ambiguous asset name '%s' (%d candidates), falling back to /Game/"),
+			*AssetName, Candidates.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MatBP2FPMappingRegistry: DSLToMaterialPath: no matching material for '%s', falling back to /Game/"),
+			*AssetName);
+	}
+
+	// Phase 2: Fallback to /Game/ convention
+	return TEXT("/Game/") + FPaths::GetPath(RelativePath) / AssetName;
 }
 
 // ========== Mutation ==========
@@ -178,8 +259,8 @@ void FMatBP2FPMappingRegistry::ScanMaterials()
 	{
 		FString PackagePath = AssetData.PackageName.ToString();
 
-		// Only scan /Game/ materials
-		if (!PackagePath.StartsWith(TEXT("/Game/")))
+		// Only scan exportable content (not engine/system paths)
+		if (!IsExportablePackage(PackagePath))
 		{
 			continue;
 		}
@@ -213,6 +294,23 @@ void FMatBP2FPMappingRegistry::ScanDSLFiles()
 	TArray<FString> FoundFiles;
 	IFileManager::Get().FindFilesRecursive(FoundFiles, *ScanDir, TEXT("*.matlang"), true, false);
 
+	// Build asset name -> package path lookup from AssetRegistry
+	// This is used to resolve orphaned DSL files (not matched in Phase 1)
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	TMap<FString, TArray<FString>> MaterialNameToPaths;
+	TArray<FAssetData> AllMaterials;
+	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), AllMaterials);
+	for (const FAssetData& Asset : AllMaterials)
+	{
+		FString PkgPath = Asset.PackageName.ToString();
+		if (IsExportablePackage(PkgPath))
+		{
+			MaterialNameToPaths.FindOrAdd(Asset.AssetName.ToString()).Add(PkgPath);
+		}
+	}
+
 	for (const FString& FilePath : FoundFiles)
 	{
 		FString AbsPath = FPaths::ConvertRelativePathToFull(FilePath);
@@ -223,8 +321,30 @@ void FMatBP2FPMappingRegistry::ScanDSLFiles()
 			continue;
 		}
 
-		// Try to reverse-map to a Material path
-		FString MatPath = DSLToMaterialPath(AbsPath);
+		// Try to resolve material path by looking up asset name in registry
+		FString AssetName = FPaths::GetBaseFilename(AbsPath);
+		FString MatPath;
+		bool bAmbiguous = false;
+
+		if (const TArray<FString>* Paths = MaterialNameToPaths.Find(AssetName))
+		{
+			if (Paths->Num() == 1)
+			{
+				MatPath = (*Paths)[0];
+			}
+			else if (Paths->Num() > 1)
+			{
+				bAmbiguous = true;
+			}
+		}
+
+		// Fallback: guess path using /Game/ convention
+		bool bGuessedPath = false;
+		if (MatPath.IsEmpty() && !bAmbiguous)
+		{
+			MatPath = DSLToMaterialPath(AbsPath);
+			bGuessedPath = !MatPath.IsEmpty();
+		}
 
 		FMatBP2FPMappingEntry Entry;
 		Entry.DSLFilePath = AbsPath;
@@ -236,10 +356,27 @@ void FMatBP2FPMappingRegistry::ScanDSLFiles()
 			Entry.MaterialPath = MatPath;
 			Entry.bMaterialExists = FPackageName::DoesPackageExist(MatPath);
 			Entry.State = EMatBPSyncState::DSLOnly;
+
+			if (bAmbiguous)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("MatBP2FPMappingRegistry: Ambiguous material name '%s' (%d matches), DSL: %s"),
+					*AssetName, MaterialNameToPaths[AssetName].Num(), *FPaths::GetCleanFilename(AbsPath));
+			}
+			else if (bGuessedPath && !Entry.bMaterialExists)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("MatBP2FPMappingRegistry: DSL file '%s' has no matching material (guessed: %s)"),
+					*FPaths::GetCleanFilename(AbsPath), *MatPath);
+			}
 		}
 		else
 		{
 			Entry.State = EMatBPSyncState::DSLOnly;
+
+			if (bAmbiguous)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("MatBP2FPMappingRegistry: DSL file '%s' - ambiguous material name '%s' (%d matches)"),
+					*FPaths::GetCleanFilename(AbsPath), *AssetName, MaterialNameToPaths[AssetName].Num());
+			}
 		}
 
 		int32 Idx = Entries.Add(MoveTemp(Entry));

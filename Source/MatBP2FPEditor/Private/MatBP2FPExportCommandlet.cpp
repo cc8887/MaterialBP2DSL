@@ -3,6 +3,7 @@
 
 #include "MatBP2FPExportCommandlet.h"
 #include "MatBPExporter.h"
+#include "FMatBP2FPMappingRegistry.h"
 #include "Materials/Material.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/FileHelper.h"
@@ -58,8 +59,8 @@ int32 UMatBP2FPExportCommandlet::Main(const FString& Params)
 		}
 		else if (!bAll)
 		{
-			// Default: only game content
-			if (!Asset.PackageName.ToString().StartsWith(TEXT("/Game/")))
+			// Default: only exportable content (not engine/system)
+			if (!FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
 			{
 				continue;
 			}
@@ -71,10 +72,15 @@ int32 UMatBP2FPExportCommandlet::Main(const FString& Params)
 		FString DSL = FMatBPExporter::ExportToString(Mat);
 		if (DSL.IsEmpty()) { Failed++; continue; }
 		
-		// Align with CompilerHook path convention: preserve /Game/ directory structure
+		// Use unified path convention via registry
 		FString PackagePath = Mat->GetPathName();
-		FString RelativePath = PackagePath.RightChop(FCString::Strlen(TEXT("/Game/")));
-		FString FileName = OutputDir / RelativePath + TEXT(".matlang");
+		FString FileName = FMatBP2FPMappingRegistry::MaterialToDSLPath(PackagePath);
+		if (FileName.IsEmpty())
+		{
+			Failed++;
+			UE_LOG(LogTemp, Warning, TEXT("  Cannot resolve DSL path for: %s"), *Mat->GetName());
+			continue;
+		}
 		
 		FString Dir = FPaths::GetPath(FileName);
 		if (!IFileManager::Get().DirectoryExists(*Dir))
