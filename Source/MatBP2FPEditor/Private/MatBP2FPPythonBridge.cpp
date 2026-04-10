@@ -7,6 +7,7 @@
 #include "MatBPImporter.h"
 #include "MatLangRoundTrip.h"
 #include "FMatBP2FPMappingRegistry.h"
+#include "MatNodeExporter.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
@@ -529,5 +530,27 @@ FMatBP2FPPythonResult UMatBP2FPPythonBridge::MaterialPathToDSLPath(const FString
 	Result.AssetPath = MaterialPath;
 	Result.FilePath = DSLPath;
 	Result.Message = FString::Printf(TEXT("%s -> %s"), *MaterialPath, *DSLPath);
+	return Result;
+}
+
+// ========== Stub Export ==========
+
+FMatBP2FPPythonResult UMatBP2FPPythonBridge::ExportStub(const FString& OutputFilePath)
+{
+	FString StubPath = OutputFilePath;
+	if (StubPath.TrimStartAndEnd().IsEmpty())
+	{
+		StubPath = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP") / TEXT("matlang-stub.scm");
+	}
+	FPaths::NormalizeFilename(StubPath);
+
+	bool bOk = FMatNodeExporter::ExportAllExpressions(StubPath);
+
+	FMatBP2FPPythonResult Result;
+	Result.bSuccess = bOk;
+	Result.FilePath = StubPath;
+	Result.Message = bOk
+		? FString::Printf(TEXT("Material expression stub exported to: %s"), *StubPath)
+		: TEXT("Failed to export material expression stub");
 	return Result;
 }

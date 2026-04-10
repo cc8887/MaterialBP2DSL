@@ -32,7 +32,14 @@ class MATBP2FPEDITOR_API UMatBP2FPSettings : public UDeveloperSettings
 	
 public:
 	UMatBP2FPSettings();
-	
+
+	// ========== Stub 设置 ==========
+
+	/** Stub 文件输出路径（相对于项目根目录） */
+	UPROPERTY(Config, EditAnywhere, Category="Stub",
+		meta=(DisplayName="Stub Output Path"))
+	FString StubOutputPath;
+
 	// ========== Auto Sync Settings ==========
 	
 	/** Auto-sync direction: None disables sync, Mat2FP exports on compile, FP2Mat imports on file change */

@@ -32,6 +32,10 @@ private:
 
 	// 初始化 Material <-> DSL 映射注册表
 	void InitializeMappingRegistry();
+
+	// Stub generation
+	void ExportStub();
+	FString GetStubPath() const;
 	
 	// Delegate handles
 	FDelegateHandle PostEngineInitHandle;

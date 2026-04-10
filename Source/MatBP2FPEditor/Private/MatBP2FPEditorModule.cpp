@@ -7,6 +7,7 @@
 #include "MatBP2FPSettings.h"
 #include "MatBP2FPCompilerHook.h"
 #include "FMatBP2FPMappingRegistry.h"
+#include "MatNodeExporter.h"
 #include "ToolMenus.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -114,7 +115,15 @@ void FMatBP2FPEditorModule::RegisterMenuExtensions()
 		LOCTEXT("ExportAll", "Export All Materials to DSL"),
 		LOCTEXT("ExportAllTooltip", "Export all materials in the project to MatLang DSL files"),
 		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateRaw(this, &FMatBP2FPEditorModule::ExportAllMaterials))
+			FUIAction(FExecuteAction::CreateRaw(this, &FMatBP2FPEditorModule::ExportAllMaterials))
+	);
+
+	Section.AddMenuEntry(
+		"ExportMatStub",
+		LOCTEXT("ExportStub", "Export MatLang Stub"),
+		LOCTEXT("ExportStubTooltip", "Generate stub file with all material expression type signatures"),
+		FSlateIcon(),
+			FUIAction(FExecuteAction::CreateRaw(this, &FMatBP2FPEditorModule::ExportStub))
 	);
 	
 	Section.AddMenuEntry(
@@ -272,6 +281,36 @@ void FMatBP2FPEditorModule::InitializeMappingRegistry()
 {
 	UE_LOG(LogTemp, Log, TEXT("MatBP2FPEditor: Initializing Material <-> DSL mapping registry..."));
 	FMatBP2FPMappingRegistry::Get().Initialize();
+}
+
+// ========== Stub Generation ==========
+
+void FMatBP2FPEditorModule::ExportStub()
+{
+	FString StubPath = GetStubPath();
+	UE_LOG(LogTemp, Log, TEXT("MatBP2FPEditor: Exporting material expression stub to %s"), *StubPath);
+
+	bool bOk = FMatNodeExporter::ExportAllExpressions(StubPath);
+	if (bOk)
+	{
+		UE_LOG(LogTemp, Log, TEXT("MatBP2FPEditor: Stub exported successfully."));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("MatBP2FPEditor: Failed to export stub."));
+	}
+}
+
+FString FMatBP2FPEditorModule::GetStubPath() const
+{
+	const UMatBP2FPSettings* Settings = GetDefault<UMatBP2FPSettings>();
+	FString Path = Settings->StubOutputPath;
+	if (FPaths::IsRelative(Path))
+	{
+		Path = FPaths::ProjectDir() / Path;
+	}
+	FPaths::NormalizeFilename(Path);
+	return Path;
 }
 
 #undef LOCTEXT_NAMESPACE

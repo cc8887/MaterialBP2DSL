@@ -157,4 +157,14 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
 	static FMatBP2FPPythonResult MaterialPathToDSLPath(const FString& MaterialPath);
+
+	// ========== Stub Export ==========
+
+	/**
+	 * Export all UMaterialExpression type definitions to a stub file.
+	 * Outputs S-expression format with expression signatures for Lint/validation.
+	 * Default path: {Project}/Saved/BP2DSL/MatBP/matlang-stub.scm
+	 */
+	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
+	static FMatBP2FPPythonResult ExportStub(const FString& OutputFilePath = TEXT(""));
 };
