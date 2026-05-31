@@ -64,6 +64,135 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPImporter, Log, All);
 #include "UObject/SavePackage.h"
 #include "MaterialEditingLibrary.h"
 
+#include "MatBP2FPModule.h"
+#include "MaterialGraph/MaterialGraph.h"
+#include "MaterialGraph/MaterialGraphNode.h"
+#include "MaterialGraph/MaterialGraphSchema.h"
+#include "EdGraph/EdGraphNode.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Framework/Application/SlateApplication.h"
+
+// ========== Import lifecycle helpers (AutoLayout hook bridge) ==========
+
+namespace
+{
+	const FName MatBP_AutoLayoutBehaviorName(TEXT("AutoLayout"));
+
+	/**
+	 * Ensure the material owns a UMaterialGraph and that its graph nodes are linked
+	 * back to the underlying UMaterialExpressions. MatBP2FP authors expressions
+	 * directly (UMaterialExpression), but the AutoLayout engine operates on
+	 * UEdGraphNode inside a UMaterialGraph, so we bridge here.
+	 */
+	static UMaterialGraph* MatBP_EnsureMaterialGraph(UMaterial* Material)
+	{
+		if (!Material)
+		{
+			return nullptr;
+		}
+
+		if (!Material->MaterialGraph)
+		{
+			Material->MaterialGraph = CastChecked<UMaterialGraph>(FBlueprintEditorUtils::CreateNewGraph(
+				Material, NAME_None, UMaterialGraph::StaticClass(), UMaterialGraphSchema::StaticClass()));
+			Material->MaterialGraph->Material = Material;
+		}
+
+		Material->MaterialGraph->RebuildGraph();
+		return Material->MaterialGraph;
+	}
+
+	/** Build expression -> graph node lookup for the current MaterialGraph. */
+	static TMap<UMaterialExpression*, UEdGraphNode*> MatBP_BuildExpressionNodeMap(UMaterialGraph* Graph)
+	{
+		TMap<UMaterialExpression*, UEdGraphNode*> Map;
+		if (!Graph)
+		{
+			return Map;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UMaterialGraphNode* MatNode = Cast<UMaterialGraphNode>(Node))
+			{
+				if (MatNode->MaterialExpression)
+				{
+					Map.Add(MatNode->MaterialExpression, MatNode);
+				}
+			}
+		}
+		return Map;
+	}
+
+	static MatBP2FPImportLifecycle::FImportLifecycleContext MatBP_MakeLifecycleContext(
+		UMaterial* Material,
+		UEdGraph* Graph,
+		bool bIsFullRebuild,
+		bool bIsIncremental)
+	{
+		MatBP2FPImportLifecycle::FImportLifecycleContext Context;
+		Context.ImportSessionId = FGuid::NewGuid();
+		Context.TargetAsset = Material;
+		Context.TargetGraph = Graph;
+		Context.ScopeName = Graph ? FName(*Graph->GetName()) : NAME_None;
+		Context.bIsFullRebuild = bIsFullRebuild;
+		Context.bIsIncremental = bIsIncremental;
+		Context.bIsHeadless = IsRunningCommandlet() || !FSlateApplication::IsInitialized();
+		Context.bWillCompile = true; // material import always finalizes via PreEditChange/PostEditChange
+		Context.RequestedBehaviors.Add(MatBP_AutoLayoutBehaviorName);
+		return Context;
+	}
+
+	static void MatBP_BroadcastNodePhase(
+		MatBP2FPImportLifecycle::EImportLifecyclePhase Phase,
+		const MatBP2FPImportLifecycle::FImportLifecycleContext& Context,
+		const TArray<MatBP2FPImportLifecycle::FImportNodeChange>& Changes)
+	{
+		if (!FMatBP2FPModule::IsAvailable())
+		{
+			return;
+		}
+
+		MatBP2FPImportLifecycle::FImportNodePhaseEvent Event;
+		Event.Phase = Phase;
+		Event.Context = Context;
+		Event.Changes = Changes;
+		FMatBP2FPModule::Get().BroadcastNodePhase(Event);
+	}
+
+	static void MatBP_BroadcastPropertyPhase(
+		MatBP2FPImportLifecycle::EImportLifecyclePhase Phase,
+		const MatBP2FPImportLifecycle::FImportLifecycleContext& Context,
+		const TArray<MatBP2FPImportLifecycle::FImportPropertyChange>& Changes)
+	{
+		if (!FMatBP2FPModule::IsAvailable())
+		{
+			return;
+		}
+
+		MatBP2FPImportLifecycle::FImportPropertyPhaseEvent Event;
+		Event.Phase = Phase;
+		Event.Context = Context;
+		Event.Changes = Changes;
+		FMatBP2FPModule::Get().BroadcastPropertyPhase(Event);
+	}
+
+	static void MatBP_BroadcastFinalizePhase(
+		MatBP2FPImportLifecycle::EImportLifecyclePhase Phase,
+		const MatBP2FPImportLifecycle::FImportLifecycleContext& Context)
+	{
+		if (!FMatBP2FPModule::IsAvailable())
+		{
+			return;
+		}
+
+		MatBP2FPImportLifecycle::FImportFinalizePhaseEvent Event;
+		Event.Phase = Phase;
+		Event.Context = Context;
+		FMatBP2FPModule::Get().BroadcastFinalizePhase(Event);
+	}
+}
+
 // ========== Public API ==========
 
 FMatBPImporter::FImportResult FMatBPImporter::ImportFromString(const FString& DSLSource, const FString& PackagePath)
@@ -268,6 +397,15 @@ FMatBPImporter::FMatBPImporter(UMaterial* InMaterial, TSharedPtr<FMaterialGraphA
 
 FMatBPImporter::FImportResult FMatBPImporter::Import()
 {
+	const bool bIsFullRebuild = true;
+	MatBP2FPImportLifecycle::FImportLifecycleContext LifecycleContext =
+		MatBP_MakeLifecycleContext(Material, nullptr, bIsFullRebuild, false);
+	TArray<MatBP2FPImportLifecycle::FImportPropertyChange> PropertyChanges;
+
+	// Before authoring expressions
+	MatBP_BroadcastNodePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PreNodeChanges, LifecycleContext, {});
+	MatBP_BroadcastPropertyPhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PrePropertyChanges, LifecycleContext, PropertyChanges);
+
 	// Step 1: Set material properties
 	SetMaterialProperties();
 	
@@ -279,11 +417,48 @@ FMatBPImporter::FImportResult FMatBPImporter::Import()
 	
 	// Step 4: Wire material outputs
 	WireMaterialOutputs();
-	
-	// Step 5: Update material
+
+	// Step 5: Bridge to UMaterialGraph so the AutoLayout engine (which operates on
+	// UEdGraphNode) can arrange the freshly imported expressions.
+	UMaterialGraph* MaterialGraph = MatBP_EnsureMaterialGraph(Material);
+	LifecycleContext.TargetGraph = MaterialGraph;
+	LifecycleContext.ScopeName = MaterialGraph ? FName(*MaterialGraph->GetName()) : NAME_None;
+
+	TArray<MatBP2FPImportLifecycle::FImportNodeChange> NodeChanges;
+	if (MaterialGraph)
+	{
+		const TMap<UMaterialExpression*, UEdGraphNode*> ExprNodeMap =
+			MatBP_BuildExpressionNodeMap(MaterialGraph);
+		for (const TPair<FString, UMaterialExpression*>& Pair : IdToExpr)
+		{
+			if (UEdGraphNode* const* NodePtr = ExprNodeMap.Find(Pair.Value))
+			{
+				MatBP2FPImportLifecycle::FImportNodeChange Change;
+				Change.Node = *NodePtr;
+				Change.ChangeType = MatBP2FPImportLifecycle::EImportNodeChangeType::Added;
+				NodeChanges.Add(Change);
+			}
+		}
+	}
+
+	// PostNodeChanges drives the AutoLayout hook, which repositions UMaterialGraphNodes.
+	MatBP_BroadcastNodePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PostNodeChanges, LifecycleContext, NodeChanges);
+
+	// Push the laid-out graph-node positions back onto the underlying expressions,
+	// since the persisted material stores positions on UMaterialExpression.
+	if (MaterialGraph)
+	{
+		MaterialGraph->LinkMaterialExpressionsFromGraph();
+	}
+
+	MatBP_BroadcastPropertyPhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PostPropertyChanges, LifecycleContext, PropertyChanges);
+
+	// Step 6: Update material
+	MatBP_BroadcastFinalizePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PreFinalize, LifecycleContext);
 	Material->PreEditChange(nullptr);
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
+	MatBP_BroadcastFinalizePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PostFinalize, LifecycleContext);
 	
 	Result.bSuccess = true;
 	Info(FString::Printf(TEXT("Import complete: %d expressions, %d connections, %d warnings"),

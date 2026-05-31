@@ -80,7 +80,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportToAST(UMaterial* Material)
 // ========== Internal ==========
 
 FMatBPExporter::FMatBPExporter(UMaterial* InMaterial)
-	: Material(InMaterial), IdCounter(0)
+	: Material(InMaterial), IdCounter(0), Function(nullptr)
 {
 }
 
@@ -517,8 +517,8 @@ void FMatBPExporter::ExportOutputs(TSharedPtr<FMaterialGraphAST> AST)
 
 FMatBPExporter::FMatBPExporter(UMaterialFunction* InFunction)
 	: Material(nullptr)
-	, Function(InFunction)
 	, IdCounter(0)
+	, Function(InFunction)
 {
 }
 
