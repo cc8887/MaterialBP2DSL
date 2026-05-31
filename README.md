@@ -142,3 +142,9 @@ UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -file=path/to/material.m
 3. **Material Instances**: 当前仅支持基础材质 (UMaterial)，不支持 Material Instance
 4. **编辑器位置**: 默认不导出节点编辑器位置（可在设置中启用）
 5. **Dynamic 表达式**: 部分动态生成的表达式类型可能需要通过反射回退处理
+
+## 相关插件
+
+- **AnimBP2FP**：动画蓝图 ⇄ AnimLang DSL 转换（姊妹项目，架构思路一致）
+- **BlueprintLisp**：EventGraph ⇄ BlueprintLisp DSL 转换
+- **BlueprintAutoLayout**：图节点自动排版。MatBP2FP 通过导入生命周期钩子（`PostNodeChanges` 阶段）与之集成——当导入上下文请求 `AutoLayout` 行为时，材质 DSL 导入完成后会自动整理新增/变更节点的布局。集成为可选：BlueprintAutoLayout 未启用时不影响导入，只是不自动排版。
