@@ -142,6 +142,60 @@ UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -file=path/to/material.m
 3. **Material Instances**: 当前仅支持基础材质 (UMaterial)，不支持 Material Instance
 4. **编辑器位置**: 默认不导出节点编辑器位置（可在设置中启用）
 5. **Dynamic 表达式**: 部分动态生成的表达式类型可能需要通过反射回退处理
+6. **增量 patch 与 `$id` 稳定性**（重要，下节详述）
+
+## 增量更新与 `$id` 稳定性
+
+`update_material_from_text` 设计上有**增量补丁**（只改属性 / 连线）和**全量重建**两条路径，由 Differ 输出的 `NumStructural` 决定走哪条：
+
+```
+NumStructural == 0  →  FMatLangPatcher.Apply（增量；仅改属性 / 连线）
+NumStructural >  0  →  ClearMaterial + 重新创建所有 expression（全量）
+```
+
+但 Differ 把 `$id` 当作匹配两次 export 之间"同一节点"的唯一 key（`MatLangDiffer.cpp::DiffExpressions` 用 `Expr->Id` 建 `OldById` / `NewById`）。而 Exporter 给每个 `UMaterialExpression` 分配 `$id` 时**不读取任何持久化字段**，是按 `$<typeprefix><counter>` 当场生成的（`MatBPExporter.cpp::GetOrAssignId`）。
+
+后果：
+
+- **第一次 import 之后**，DSL 里写的语义 ID（`$base_color`、`$rim_fresnel`）不会被保留——`UMaterialExpression` 上没有任何字段记录"我在 matlang 里叫什么"。
+- **下一次 `update_material_from_text` 时**，Step 1 重新 export 当前材质得到 OldAST，IDs 是 `$vec31`、`$mul3`、`$sparam2`...；调用方传入的 NewAST 用的还是 `$base_color` 等语义 ID。两套集合零交集 → Differ 视所有旧节点为 Removed、所有新节点为 Added，全部按 Structural 计数 → 触发全量重建。
+
+实测：41 个节点的描边材质，仅修改两个 scalar 默认值，Diff 报告 87 changes (82 structural)，最终走 full rebuild。
+
+### 什么场景下增量 patch 真的会生效？
+
+只有在**调用方先 export、再修改、再 import**的回路里：
+
+```python
+# ✅ 增量 patch 命中
+exp = unreal.MatBP2FPPythonBridge.export_material_to_text("/Game/M_Foo.M_Foo")
+new_dsl = exp.dsl_text.replace(":default 0.5", ":default 0.85")  # 仅改属性值
+unreal.MatBP2FPPythonBridge.update_material_from_text("/Game/M_Foo.M_Foo", new_dsl, True)
+
+# ❌ 全量重建（典型 AI workflow）
+my_dsl = build_dsl_with_semantic_ids()  # $base_color, $rim_fresnel, ...
+unreal.MatBP2FPPythonBridge.update_material_from_text("/Game/M_Foo.M_Foo", my_dsl, True)
+```
+
+### 推荐工作流（Export-Edit-Import 模式）
+
+如果你需要享受增量 patch 的速度（避免大材质全图重排）和精度（节点 GUID 稳定，引用关系不重建），把流程改成：
+
+1. `export_material_to_text` 取当前 DSL；
+2. 在导出文本上**就地修改**——不要重写、不要换 `$id`；
+3. 把改完的文本通过 `update_material_from_text` 推回。
+
+### 何时无所谓
+
+如果你只关心"材质最终长什么样"，不在意是否走增量 patch，那么这个限制实际不影响功能正确性——全量重建会忠实地按 NewAST 重建图，行为与增量 patch 等价，只是更慢且不保留节点 GUID。
+
+### 对下游钩子（如 BlueprintAutoLayout / DrivenHighlight）的影响
+
+由于全量重建会广播 `OnNodePhase(PostNodeChanges)` 上 N 个 `Added` 事件、且**不**走 `OnPropertyPhase` 路径，依赖生命周期事件的下游消费者会观察到：
+
+- 每次"小改 DSL"都收到一波 N×Added 事件，而不是预期的少量 Modified；
+- `OnPropertyPhase` 事件在材质场景下基本不会触发（只有真正 export-edit-import 的回路才会发）；
+- 下游若按 NodeGuid 跨 import 跟踪某个语义节点，跟丢——节点 GUID 在每次全量重建时都会变。
 
 ## 相关插件
 
