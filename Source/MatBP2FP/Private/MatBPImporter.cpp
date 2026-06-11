@@ -191,6 +191,116 @@ namespace
 		Event.Context = Context;
 		FMatBP2FPModule::Get().BroadcastFinalizePhase(Event);
 	}
+
+	/**
+	 * Map a set of MatLang expression $ids to their corresponding
+	 * UMaterialExpression* on a live material. Mirrors the export-by-index
+	 * matching used by FMatLangPatcher::BuildExpressionMap so the ids line up
+	 * with the diff's ExprId values.
+	 */
+	static TMap<FString, UMaterialExpression*> MatBP_BuildIdToExpressionMap(UMaterial* Material)
+	{
+		TMap<FString, UMaterialExpression*> IdToExpr;
+		if (!Material)
+		{
+			return IdToExpr;
+		}
+
+		TSharedPtr<FMaterialGraphAST> CurrentAST = FMatBPExporter::ExportToAST(Material);
+		if (!CurrentAST)
+		{
+			return IdToExpr;
+		}
+
+		TArray<UMaterialExpression*> AllExprs;
+		for (UMaterialExpression* Expr : Material->GetExpressions())
+		{
+			AllExprs.Add(Expr);
+		}
+
+		for (int32 i = 0; i < CurrentAST->Expressions.Num() && i < AllExprs.Num(); ++i)
+		{
+			IdToExpr.Add(CurrentAST->Expressions[i]->Id, AllExprs[i]);
+		}
+		return IdToExpr;
+	}
+
+	/**
+	 * After an incremental patch, collect the UMaterialGraphNodes affected by
+	 * the diff and broadcast PostNodeChanges so the AutoLayout hook can run a
+	 * selection-only layout (changed nodes re-arranged around their neighbours,
+	 * untouched nodes pinned in place).
+	 */
+	static void MatBP_BroadcastIncrementalNodeChanges(
+		UMaterial* Material,
+		const FMatLangDiffResult& DiffResult)
+	{
+		if (!Material || !FMatBP2FPModule::IsAvailable())
+		{
+			return;
+		}
+
+		// Ensure the material owns a graph linked to the underlying expressions.
+		UMaterialGraph* MaterialGraph = MatBP_EnsureMaterialGraph(Material);
+		if (!MaterialGraph)
+		{
+			return;
+		}
+
+		// Build $id -> UMaterialExpression and UMaterialExpression -> graph node maps.
+		const TMap<FString, UMaterialExpression*> IdToExpr = MatBP_BuildIdToExpressionMap(Material);
+		const TMap<UMaterialExpression*, UEdGraphNode*> ExprNodeMap =
+			MatBP_BuildExpressionNodeMap(MaterialGraph);
+
+		// Collect the distinct affected expression ids from the diff
+		// (skip material-level / output diffs which carry no ExprId).
+		TSet<FString> AffectedIds;
+		for (const FMatLangDiffEntry& Entry : DiffResult.Entries)
+		{
+			if (!Entry.ExprId.IsEmpty())
+			{
+				AffectedIds.Add(Entry.ExprId);
+			}
+		}
+
+		// Translate affected ids to graph nodes.
+		TArray<MatBP2FPImportLifecycle::FImportNodeChange> NodeChanges;
+		TSet<UEdGraphNode*> SeenNodes;
+		for (const FString& Id : AffectedIds)
+		{
+			if (UMaterialExpression* const* ExprPtr = IdToExpr.Find(Id))
+			{
+				if (UEdGraphNode* const* NodePtr = ExprNodeMap.Find(*ExprPtr))
+				{
+					if (*NodePtr && !SeenNodes.Contains(*NodePtr))
+					{
+						SeenNodes.Add(*NodePtr);
+						MatBP2FPImportLifecycle::FImportNodeChange Change;
+						Change.Node = *NodePtr;
+						Change.ChangeType = MatBP2FPImportLifecycle::EImportNodeChangeType::Modified;
+						NodeChanges.Add(Change);
+					}
+				}
+			}
+		}
+
+		// If nothing resolved to a node, don't broadcast (avoids a full-graph
+		// relayout from an empty change set).
+		if (NodeChanges.Num() == 0)
+		{
+			return;
+		}
+
+		MatBP2FPImportLifecycle::FImportLifecycleContext Context =
+			MatBP_MakeLifecycleContext(Material, MaterialGraph, /*bIsFullRebuild*/ false, /*bIsIncremental*/ true);
+
+		MatBP_BroadcastNodePhase(
+			MatBP2FPImportLifecycle::EImportLifecyclePhase::PostNodeChanges, Context, NodeChanges);
+
+		// Push laid-out graph-node positions back onto the underlying expressions,
+		// since the persisted material stores positions on UMaterialExpression.
+		MaterialGraph->LinkMaterialExpressionsFromGraph();
+	}
 }
 
 // ========== Public API ==========
@@ -358,6 +468,12 @@ FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailedFromAST(
 			Result.NumApplied = PatchResult.NumApplied;
 			Result.NumFailed = PatchResult.NumFailed;
 			Result.Messages.Append(PatchResult.Messages);
+
+			// Run a selection-only AutoLayout on the patched nodes: changed
+			// expressions are re-arranged relative to their neighbours while
+			// the rest of the graph stays pinned.
+			MatBP_BroadcastIncrementalNodeChanges(ExistingMaterial, DiffResult);
+
 			return Result;
 		}
 
