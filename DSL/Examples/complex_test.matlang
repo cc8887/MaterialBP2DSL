@@ -1,0 +1,186 @@
+;; Complex Material Test — Designed to exercise BlueprintAutoLayout
+;; Features: Deep chains, DAG forks, Pure node stacks, side branches, 
+;;           nested operations, parameter constants, texture sampling
+;;
+;; Structure:
+;;   - BaseColor chain: Texture → desaturate → multiply(×tint) → clamp → multiply(×fresnel)
+;;   - Normal chain: Texture → transform → normalize
+;;   - Roughness chain: scalar → smoothstep → lerp
+;;   - Metallic: constant
+;;   - Emissive chain: fresnel → multiply(×color) → multiply(×intensity)
+;;   - Shared: Fresnel feeds both emissive AND basecolor (DAG fork!)
+;;   - Shared: TextureCoordinate feeds multiple samplers (DAG fork!)
+
+(material "M_ComplexLayoutTest"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    ;; ========== GROUP 1: Base Color Chain (deep linear) ==========
+    ;; T_Brick_D → sample → desaturate → multiply(×tint) → clamp → basecolor
+    (texture-sample $ts_brick_d
+      :texture (asset "/Game/Textures/T_Brick_D")
+      :sampler-type color
+      :uv (connect $uv_main))
+
+    (desaturation $desat_brick
+      :fraction 0.3
+      :input (connect $ts_brick_d 0))
+
+    (vector-parameter $vparam_tint
+      :name "BaseTintColor"
+      :default (1.0 0.95 0.85 1.0)
+      :group "Base Color")
+
+    (multiply $mul_tint
+      :a (connect $desat_brick 0)
+      :b (connect $vparam_tint 0))
+
+    (clamp $clamp_color
+      :min-default 0.0
+      :max-default 1.0
+      :input (connect $mul_tint 0))
+
+    (multiply $mul_fresnel_blend
+      :a (connect $clamp_color 0)
+      :b (connect $fresnel_pow 0))
+
+    ;; ========== GROUP 2: Normal Map Chain (moderate depth) ==========
+    (texture-sample $ts_brick_n
+      :texture (asset "/Game/Textures/T_Brick_N")
+      :sampler-type normal
+      :uv (connect $uv_main))
+
+    (flatten-normal $flat_n
+      :input (connect $ts_brick_n 0))
+
+    (constant3-vector $vec_bias_n
+      :value (0.0 0.0 1.0))
+
+    (add $add_n_bias
+      :a (connect $flat_n 0)
+      :b (connect $vec_bias_n 0))
+
+    (normalize $norm_final
+      :input (connect $add_n_bias 0))
+
+    ;; ========== GROUP 3: Roughness Chain (with lerp) ==========
+    (scalar-parameter $sparam_rough
+      :name "RoughnessBase"
+      :default 0.5
+      :group "Surface")
+
+    (scalar-parameter $sparam_rough_min
+      :name "RoughnessMin"
+      :default 0.1
+      :group "Surface")
+
+    (scalar-parameter $sparam_rough_max
+      :name "RoughnessMax"
+      :default 0.9
+      :group "Surface")
+
+    (power $pow_rough
+      :base (connect $sparam_rough 0)
+      :exp 2.0)
+
+    (linear-interpolate $lerp_rough
+      :a (connect $sparam_rough_min 0)
+      :b (connect $sparam_rough_max 0)
+      :alpha (connect $pow_rough 0))
+
+    ;; ========== GROUP 4: Metallic (trivial constant) ==========
+    (constant $const_metal
+      :value 0.8)
+
+    ;; ========== GROUP 5: Emissive Chain (fresnel forks here!) ==========
+    (fresnel $fresnel_pow
+      :exponent-in 3.0
+      :base-reflect-fraction-in 0.04
+      :normal (connect $norm_final 0))
+
+    (one-minus $oneminus_fresnel
+      :input (connect $fresnel_pow 0))
+
+    (multiply $mul_fresnel_rim
+      :a (connect $oneminus_fresnel 0)
+      :b (connect $vparam_rim_color 0))
+
+    (vector-parameter $vparam_rim_color
+      :name "RimLightColor"
+      :default (0.2 0.4 1.0 1.0)
+      :group "Emissive")
+
+    ;; ========== GROUP 6: Shared UV Chain ==========
+    (texture-coordinate $uv_main
+      :coordinate-index 0
+      :u-tiling 3.0
+      :v-tiling 3.0)
+
+    ;; ========== GROUP 7: Additional texture with custom UV ==========
+    (texture-coordinate $uv_detail
+      :coordinate-index 1
+      :u-tiling 8.0
+      :v-tiling 8.0)
+
+    (texture-sample $ts_detail
+      :texture (asset "/Game/Textures/T_DetailMap")
+      :sampler-type color
+      :uv (connect $uv_detail))
+
+    ;; ========== GROUP 8: Roughness modulation from detail ==========
+    (texture-sample $ts_rough_mask
+      :texture (asset "/Game/Textures/T_RoughnessMask")
+      :sampler-type grayscale
+      :uv (connect $uv_detail))
+
+    (constant $const_rough_strength
+      :value 0.3)
+
+    (multiply $mul_rough_mod
+      :a (connect $ts_rough_mask 0)
+      :b (connect $const_rough_strength 0))
+
+    (add $add_rough_final
+      :a (connect $lerp_rough 0)
+      :b (connect $mul_rough_mod 0))
+
+    ;; ========== GROUP 9: AO Chain (short) ==========
+    (texture-sample $ts_ao
+      :texture (asset "/Game/Textures/T_AO")
+      :sampler-type grayscale
+      :uv (connect $uv_main))
+
+    (multiply $mul_ao_detail
+      :a (connect $ts_detail 0)
+      :b (connect $ts_ao 0))
+
+    ;; ========== GROUP 10: Specular (short, pure math) ==========
+    (constant $const_spec_base
+      :value 0.5)
+
+    (multiply $mul_spec_rough
+      :a (connect $const_spec_base 0)
+      :b (connect $sparam_rough 0))
+
+    (one-minus $inv_rough
+      :input (connect $mul_spec_rough 0))
+
+    ;; ========== GROUP 11: Ambient Occlusion ==========
+    (constant $const_ao_strength
+      :value 1.0)
+
+    (multiply $mul_ao_final
+      :a (connect $ts_ao 0)
+      :b (connect $const_ao_strength 0)))
+
+  (outputs
+    :base-color (connect $mul_fresnel_blend 0)
+    :normal (connect $norm_final 0)
+    :metallic (connect $const_metal 0)
+    :roughness (connect $add_rough_final 0)
+    :specular (connect $inv_rough 0)
+    :emissive-color (connect $mul_fresnel_rim 0)
+    :ambient-occlusion (connect $mul_ao_final 0)))
