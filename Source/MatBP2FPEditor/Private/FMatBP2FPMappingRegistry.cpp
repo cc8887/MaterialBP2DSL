@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "FMatBP2FPMappingRegistry.h"
+#include "MatBP2FPVersionCompat.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/AssetData.h"
 #include "Misc/Paths.h"
@@ -158,7 +159,7 @@ FString FMatBP2FPMappingRegistry::DSLToMaterialPath(const FString& DSLFilePath)
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 
 	TArray<FAssetData> AllMaterials;
-	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), AllMaterials);
+	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), AllMaterials);
 
 	TArray<FString> Candidates;
 	for (const FAssetData& Asset : AllMaterials)
@@ -253,7 +254,7 @@ void FMatBP2FPMappingRegistry::ScanMaterials()
 
 	// Scan Material assets (UMaterial only, not MaterialInstance)
 	TArray<FAssetData> MaterialAssets;
-	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets);
+	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets);
 
 	for (const FAssetData& AssetData : MaterialAssets)
 	{
@@ -301,7 +302,7 @@ void FMatBP2FPMappingRegistry::ScanDSLFiles()
 
 	TMap<FString, TArray<FString>> MaterialNameToPaths;
 	TArray<FAssetData> AllMaterials;
-	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), AllMaterials);
+	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), AllMaterials);
 	for (const FAssetData& Asset : AllMaterials)
 	{
 		FString PkgPath = Asset.PackageName.ToString();

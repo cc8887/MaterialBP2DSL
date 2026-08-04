@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBP2FPRoundTripCommandlet.h"
+#include "MatBP2FPVersionCompat.h"
 #include "MatLangRoundTrip.h"
 #include "FMatBP2FPMappingRegistry.h"
 #include "Materials/Material.h"
@@ -24,7 +25,7 @@ int32 UMatBP2FPRoundTripCommandlet::Main(const FString& Params)
 	AR.SearchAllAssets(true);
 	
 	TArray<FAssetData> MaterialAssets;
-	AR.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets, true);
+	AR.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets, true);
 	
 	int32 Passed = 0;
 	int32 Total = 0;

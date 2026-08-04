@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBP2FPEditorModule.h"
+#include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
 #include "MatLangRoundTrip.h"
 #include "MatBP2FPSettings.h"
@@ -28,7 +29,11 @@ void FMatBP2FPEditorModule::StartupModule()
 	UE_LOG(LogTemp, Log, TEXT("MatBP2FPEditor: Module startup"));
 	
 	// Register engine init callback
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(
+#else
 	PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(
+#endif
 		this, &FMatBP2FPEditorModule::OnEngineInit
 	);
 	
@@ -52,7 +57,11 @@ void FMatBP2FPEditorModule::ShutdownModule()
 	}
 	
 	// Remove callbacks
-	FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+		FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
+#else
+		FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
+#endif
 	
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
@@ -153,7 +162,7 @@ void FMatBP2FPEditorModule::ExportAllMaterials()
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 	
 	TArray<FAssetData> MaterialAssets;
-	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets, true);
+	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets, true);
 	
 	// Filter to exportable content only (not engine/system paths)
 	TArray<FAssetData> GameMaterials;
@@ -214,7 +223,7 @@ void FMatBP2FPEditorModule::RunRoundTripValidation()
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 	
 	TArray<FAssetData> MaterialAssets;
-	AssetRegistry.GetAssetsByClass(UMaterial::StaticClass()->GetClassPathName(), MaterialAssets, true);
+	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets, true);
 	
 	// Filter to exportable content (not engine/system paths)
 	TArray<FAssetData> GameMaterials;

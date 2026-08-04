@@ -1,9 +1,9 @@
 {
   "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "0.1.0-alpha",
+  "Version": 2,
+  "VersionName": "0.2.0-alpha",
   "FriendlyName": "MatBP2FP - Material Blueprint to Functional Programming",
-  "Description": "Convert UE Material Blueprints to functional programming DSL and back",
+  "Description": "Convert UE 4.27-5.8 Material graphs to functional programming DSL and back",
   "Category": "Materials",
   "CreatedBy": "ccc887",
   "CreatedByURL": "",

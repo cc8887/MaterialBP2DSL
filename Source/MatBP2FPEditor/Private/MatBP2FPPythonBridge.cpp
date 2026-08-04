@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBP2FPPythonBridge.h"
+#include "MatBP2FPVersionCompat.h"
 
 #include "MatBPExporter.h"
 #include "MatBPImporter.h"
@@ -161,9 +162,9 @@ namespace
 {
 	/** Recursively collect all MaterialFunctions referenced by a material or function */
 	void CollectMaterialFunctionDependencies(
-		const TConstArrayView<TObjectPtr<UMaterialExpression>>& Expressions,
-		TSet<TObjectPtr<UMaterialFunctionInterface>>& OutVisited,
-		TArray<TObjectPtr<UMaterialFunctionInterface>>& OutOrder)
+		const TArray<UMaterialExpression*>& Expressions,
+		TSet<UMaterialFunctionInterface*>& OutVisited,
+		TArray<UMaterialFunctionInterface*>& OutOrder)
 	{
 		for (UMaterialExpression* Expr : Expressions)
 		{
@@ -174,7 +175,7 @@ namespace
 					OutVisited.Add(MFC->MaterialFunction);
 					OutOrder.Add(MFC->MaterialFunction);
 					// Recurse into the function's own expressions
-					CollectMaterialFunctionDependencies(MFC->MaterialFunction->GetExpressions(), OutVisited, OutOrder);
+					CollectMaterialFunctionDependencies(MatBP2FPCompat::GetFunctionExpressions(MFC->MaterialFunction), OutVisited, OutOrder);
 				}
 			}
 		}
@@ -217,9 +218,9 @@ FMatBP2FPPythonResult UMatBP2FPPythonBridge::ExportMaterialWithDependenciesToFil
 	TArray<FString> FailedFiles;
 
 	// 1. Recursively collect all referenced MaterialFunctions
-	TSet<TObjectPtr<UMaterialFunctionInterface>> Visited;
-	TArray<TObjectPtr<UMaterialFunctionInterface>> DepFunctions;
-	CollectMaterialFunctionDependencies(Mat->GetExpressions(), Visited, DepFunctions);
+	TSet<UMaterialFunctionInterface*> Visited;
+	TArray<UMaterialFunctionInterface*> DepFunctions;
+	CollectMaterialFunctionDependencies(MatBP2FPCompat::GetMaterialExpressions(Mat), Visited, DepFunctions);
 
 	// 2. Export each MaterialFunction (dependencies first, topological order)
 	for (auto Func : DepFunctions)

@@ -4,6 +4,7 @@
 #include "MatLangRoundTrip.h"
 #include "MatBPExporter.h"
 #include "MatLangParser.h"
+#include "Materials/Material.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMatLangRoundTrip, Log, All);
 

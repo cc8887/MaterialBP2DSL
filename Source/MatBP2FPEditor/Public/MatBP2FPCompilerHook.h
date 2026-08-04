@@ -4,6 +4,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 class UMaterialInterface;
 
@@ -48,7 +50,11 @@ private:
 
 	// Delegate handle
 	FDelegateHandle CompilationFinishedHandle;
+#if ENGINE_MAJOR_VERSION >= 5
 	FTSTicker::FDelegateHandle TickerHandle;
+#else
+	FDelegateHandle TickerHandle;
+#endif
 
 	// Registration state
 	bool bIsRegistered = false;

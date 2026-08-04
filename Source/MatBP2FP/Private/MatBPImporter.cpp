@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBPImporter.h"
+#include "MatBP2FPVersionCompat.h"
 #include "MatLangParser.h"
 #include "MatLangDiffer.h"
 #include "MatLangPatcher.h"
@@ -58,7 +59,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPImporter, Log, All);
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionSetMaterialAttributes.h"
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2)
 #include "MaterialDomain.h"
+#endif
 #include "Factories/MaterialFactoryNew.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
@@ -213,7 +216,7 @@ namespace
 		}
 
 		TArray<UMaterialExpression*> AllExprs;
-		for (UMaterialExpression* Expr : Material->GetExpressions())
+		for (UMaterialExpression* Expr : MatBP2FPCompat::GetMaterialExpressions(Material))
 		{
 			AllExprs.Add(Expr);
 		}
@@ -659,7 +662,7 @@ UMaterialExpression* FMatBPImporter::CreateExpression(TSharedPtr<FMatExpressionA
 	}
 	
 	// Add to material
-	Material->GetExpressionCollection().AddExpression(Expr);
+	MatBP2FPCompat::AddMaterialExpression(Material, Expr);
 	
 	// Set type-specific properties
 	SetExpressionProperties(ExprAST, Expr);
@@ -680,7 +683,7 @@ void FMatBPImporter::WireConnections()
 
 void FMatBPImporter::WireExpressionInputs(TSharedPtr<FMatExpressionAST> ExprAST, UMaterialExpression* Expr)
 {
-	const int32 NumInputs = Expr->CountInputs();
+	const int32 NumInputs = MatBP2FPCompat::CountExpressionInputs(Expr);
 	
 	for (const FMatLangInput& InputAST : ExprAST->Inputs)
 	{
@@ -757,9 +760,6 @@ void FMatBPImporter::WireExpressionInputs(TSharedPtr<FMatExpressionAST> ExprAST,
 
 void FMatBPImporter::WireMaterialOutputs()
 {
-	UMaterialEditorOnlyData* EditorData = Material->GetEditorOnlyData();
-	if (!EditorData) return;
-	
 	struct FOutputMapping
 	{
 		FString DSLName;
@@ -767,21 +767,16 @@ void FMatBPImporter::WireMaterialOutputs()
 	};
 	
 	TArray<FOutputMapping> Mappings;
-	Mappings.Add({TEXT("base-color"), &EditorData->BaseColor});
-	Mappings.Add({TEXT("metallic"), &EditorData->Metallic});
-	Mappings.Add({TEXT("specular"), &EditorData->Specular});
-	Mappings.Add({TEXT("roughness"), &EditorData->Roughness});
-	Mappings.Add({TEXT("anisotropy"), &EditorData->Anisotropy});
-	Mappings.Add({TEXT("emissive-color"), &EditorData->EmissiveColor});
-	Mappings.Add({TEXT("opacity"), &EditorData->Opacity});
-	Mappings.Add({TEXT("opacity-mask"), &EditorData->OpacityMask});
-	Mappings.Add({TEXT("normal"), &EditorData->Normal});
-	Mappings.Add({TEXT("tangent"), &EditorData->Tangent});
-	Mappings.Add({TEXT("world-position-offset"), &EditorData->WorldPositionOffset});
-	Mappings.Add({TEXT("subsurface-color"), &EditorData->SubsurfaceColor});
-	Mappings.Add({TEXT("ambient-occlusion"), &EditorData->AmbientOcclusion});
-	Mappings.Add({TEXT("refraction"), &EditorData->Refraction});
-	Mappings.Add({TEXT("pixel-depth-offset"), &EditorData->PixelDepthOffset});
+	static const TCHAR* SlotNames[] = {
+		TEXT("base-color"), TEXT("metallic"), TEXT("specular"), TEXT("roughness"),
+		TEXT("anisotropy"), TEXT("emissive-color"), TEXT("opacity"), TEXT("opacity-mask"),
+		TEXT("normal"), TEXT("tangent"), TEXT("world-position-offset"), TEXT("subsurface-color"),
+		TEXT("ambient-occlusion"), TEXT("refraction"), TEXT("pixel-depth-offset")
+	};
+	for (const TCHAR* SlotName : SlotNames)
+	{
+		Mappings.Add({SlotName, MatBP2FPCompat::GetMaterialInput(Material, SlotName)});
+	}
 	
 	for (const auto& Pair : AST->Outputs.Slots)
 	{
@@ -1052,7 +1047,7 @@ void FMatBPImporter::SetExpressionProperties(TSharedPtr<FMatExpressionAST> ExprA
 		}
 		
 		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expr);
-		Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
+		MatBP2FPCompat::ImportPropertyText(Prop, Value, ValuePtr, Expr);
 	}
 }
 
@@ -1149,7 +1144,9 @@ EMaterialShadingModel FMatBPImporter::MapShadingModelToUE(EMatLangShadingModel M
 		case EMatLangShadingModel::Eye:                return MSM_Eye;
 		case EMatLangShadingModel::SingleLayerWater:   return MSM_SingleLayerWater;
 		case EMatLangShadingModel::ThinTranslucent:    return MSM_ThinTranslucent;
+#if ENGINE_MAJOR_VERSION >= 5
 		case EMatLangShadingModel::Strata:             return MSM_Strata;
+#endif
 		default: return MSM_DefaultLit;
 	}
 }
@@ -1157,27 +1154,8 @@ EMaterialShadingModel FMatBPImporter::MapShadingModelToUE(EMatLangShadingModel M
 void FMatBPImporter::ClearMaterial()
 {
 	// Remove all existing expressions
-	Material->GetExpressionCollection().Empty();
-	
-	// Clear all material input connections
-	if (UMaterialEditorOnlyData* EditorData = Material->GetEditorOnlyData())
-	{
-		EditorData->BaseColor = FColorMaterialInput();
-		EditorData->Metallic = FScalarMaterialInput();
-		EditorData->Specular = FScalarMaterialInput();
-		EditorData->Roughness = FScalarMaterialInput();
-		EditorData->Anisotropy = FScalarMaterialInput();
-		EditorData->EmissiveColor = FColorMaterialInput();
-		EditorData->Opacity = FScalarMaterialInput();
-		EditorData->OpacityMask = FScalarMaterialInput();
-		EditorData->Normal = FVectorMaterialInput();
-		EditorData->Tangent = FVectorMaterialInput();
-		EditorData->WorldPositionOffset = FVectorMaterialInput();
-		EditorData->SubsurfaceColor = FColorMaterialInput();
-		EditorData->AmbientOcclusion = FScalarMaterialInput();
-		EditorData->Refraction = FScalarMaterialInput();
-		EditorData->PixelDepthOffset = FScalarMaterialInput();
-	}
+	MatBP2FPCompat::ClearMaterialExpressions(Material);
+	MatBP2FPCompat::ClearMaterialInputs(Material);
 }
 
 void FMatBPImporter::Warn(const FString& Message)

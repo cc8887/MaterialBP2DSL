@@ -1,0 +1,37 @@
+;; DAG fixture: Fresnel and color parameters fan out to multiple consumers.
+(material "M_DAGSharedInputs"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    (vector-parameter $vparam1
+      :name "Tint"
+      :default (0.12 0.35 0.8 1.0))
+    (scalar-parameter $sparam2
+      :name "RoughnessMin"
+      :default 0.2
+      :group "Surface")
+    (fresnel $fresnel3
+      :exponent 4.0
+      :base-reflect-fraction 0.04)
+    (multiply $mul4
+      :a (connect $vparam1 0)
+      :b (connect $fresnel3 0))
+    (one-minus $oneminus5
+      :input (connect $fresnel3 0))
+    (multiply $mul6
+      :a (connect $oneminus5 0)
+      :b (connect $vparam1 0))
+    (constant $const7
+      :value 0.85)
+    (linear-interpolate $lerp8
+      :a (connect $sparam2 0)
+      :b (connect $const7 0)
+      :alpha (connect $fresnel3 0)))
+
+  (outputs
+    :base-color (connect $mul4 0)
+    :emissive-color (connect $mul6 0)
+    :roughness (connect $lerp8 0)))

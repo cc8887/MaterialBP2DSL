@@ -1,0 +1,25 @@
+;; Baseline fixture: asset-free PBR graph supported by UE4.27 through UE5.8.
+(material "M_BaselinePBR"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    (constant3-vector $vec31
+      :value (0.18 0.42 0.75))
+    (scalar-parameter $sparam2
+      :name "Roughness"
+      :default 0.55
+      :group "Surface")
+    (constant $const3
+      :value 0.0)
+    (multiply $mul4
+      :a (connect $vec31 0)
+      :b (connect $sparam2 0)))
+
+  (outputs
+    :base-color (connect $vec31 0)
+    :roughness (connect $sparam2 0)
+    :metallic (connect $const3 0)
+    :emissive-color (connect $mul4 0)))

@@ -28,7 +28,8 @@ public class MatBP2FPEditor : ModuleRules
 			"EditorStyle",
 			"ToolMenus",           // Editor menus
 			"DeveloperSettings",   // Project settings
-			"AssetRegistry"        // Asset discovery
+			"AssetRegistry",       // Asset discovery
+			"Projects"             // Plugin fixture discovery in automation tests
 		});
 	}
 }

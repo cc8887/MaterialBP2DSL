@@ -1,0 +1,9 @@
+;; Capability fixture: UE4.27 intentionally degrades Strata to Default Lit.
+(material "M_StrataCapability"
+  :domain surface
+  :blend-mode opaque
+  :shading-model strata
+  :two-sided false
+
+  (expressions)
+  (outputs))

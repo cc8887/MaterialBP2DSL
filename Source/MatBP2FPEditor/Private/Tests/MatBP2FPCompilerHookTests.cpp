@@ -10,11 +10,17 @@
 #include "Misc/AutomationTest.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInterface.h"
+#include "Engine/Blueprint.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
 // Standard test flags: runs in Editor + Commandlet context, ProductFilter
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5)
 #define MBP_FLAGS (EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+#else
+#define MBP_FLAGS (EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+#endif
 
 #define MBP_TEST(Name) \
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(F##Name, "MatBP2FP.CompilerHook." #Name, MBP_FLAGS)

@@ -1,0 +1,21 @@
+;; Same topology and IDs as incremental_before; only values change.
+(material "M_IncrementalFixture"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    (constant3-vector $vec31
+      :value (0.8 0.22 0.12))
+    (scalar-parameter $sparam2
+      :name "Roughness"
+      :default 0.8
+      :group "Surface")
+    (constant $const3
+      :value 0.75))
+
+  (outputs
+    :base-color (connect $vec31 0)
+    :roughness (connect $sparam2 0)
+    :metallic (connect $const3 0)))

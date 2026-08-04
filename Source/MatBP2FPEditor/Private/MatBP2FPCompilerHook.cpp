@@ -36,8 +36,13 @@ void FMatBP2FPCompilerHook::Register()
 		this, &FMatBP2FPCompilerHook::OnMaterialCompilationFinished);
 
 	// Ticker for deferred processing
+#if ENGINE_MAJOR_VERSION >= 5
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateRaw(this, &FMatBP2FPCompilerHook::Tick), 0.5f);
+#else
+	TickerHandle = FTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateRaw(this, &FMatBP2FPCompilerHook::Tick), 0.5f);
+#endif
 
 	bIsRegistered = true;
 
@@ -56,7 +61,11 @@ void FMatBP2FPCompilerHook::Unregister()
 
 	if (TickerHandle.IsValid())
 	{
+#if ENGINE_MAJOR_VERSION >= 5
 		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
+#else
+		FTicker::GetCoreTicker().RemoveTicker(TickerHandle);
+#endif
 		TickerHandle.Reset();
 	}
 

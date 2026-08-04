@@ -1,0 +1,21 @@
+;; Initial state for a property-only incremental update.
+(material "M_IncrementalFixture"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    (constant3-vector $vec31
+      :value (0.3 0.45 0.7))
+    (scalar-parameter $sparam2
+      :name "Roughness"
+      :default 0.35
+      :group "Surface")
+    (constant $const3
+      :value 0.0))
+
+  (outputs
+    :base-color (connect $vec31 0)
+    :roughness (connect $sparam2 0)
+    :metallic (connect $const3 0)))

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatLangPatcher.h"
+#include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
 #include "MatLangParser.h"
 
@@ -27,7 +28,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatLangPatcher, Log, All);
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionIf.h"
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2)
 #include "MaterialDomain.h"
+#endif
 
 // ========== Public API ==========
 
@@ -152,7 +155,7 @@ void FMatLangPatcher::BuildExpressionMap()
 
 	// Build expression array indexed the same way as export
 	TArray<UMaterialExpression*> AllExprs;
-	for (UMaterialExpression* Expr : Material->GetExpressions())
+	for (UMaterialExpression* Expr : MatBP2FPCompat::GetMaterialExpressions(Material))
 	{
 		AllExprs.Add(Expr);
 	}
@@ -257,7 +260,7 @@ void FMatLangPatcher::ApplyMaterialProperty(const FMatLangDiffEntry& Entry)
 			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Material);
 			FString Value = Entry.NewValue;
 			Value.RemoveFromStart(TEXT("\"")); Value.RemoveFromEnd(TEXT("\""));
-			Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
+			MatBP2FPCompat::ImportPropertyText(Prop, Value, ValuePtr, Material);
 			Result.NumApplied++;
 		}
 		else
@@ -320,7 +323,7 @@ void FMatLangPatcher::ApplyExpressionProperty(const FMatLangDiffEntry& Entry)
 			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expr);
 			FString Value = Entry.NewValue;
 			Value.RemoveFromStart(TEXT("\"")); Value.RemoveFromEnd(TEXT("\""));
-			Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
+			MatBP2FPCompat::ImportPropertyText(Prop, Value, ValuePtr, Expr);
 			Result.NumApplied++;
 		}
 		else
@@ -466,7 +469,7 @@ void FMatLangPatcher::SetExpressionPropertyFromAST(
 		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expr);
 		FString CleanValue = Value;
 		CleanValue.RemoveFromStart(TEXT("\"")); CleanValue.RemoveFromEnd(TEXT("\""));
-		Prop->ImportText_Direct(*CleanValue, ValuePtr, nullptr, PPF_None);
+		MatBP2FPCompat::ImportPropertyText(Prop, CleanValue, ValuePtr, Expr);
 		Result.NumApplied++;
 	}
 	else
@@ -502,7 +505,7 @@ void FMatLangPatcher::ApplyExpressionInput(const FMatLangDiffEntry& Entry)
 	{
 		// Disconnect the input
 		FString CamelName = KebabToCamel(Entry.Key);
-		const int32 NumInputs = Expr->CountInputs();
+		const int32 NumInputs = MatBP2FPCompat::CountExpressionInputs(Expr);
 		for (int32 i = 0; i < NumInputs; ++i)
 		{
 			FName InputName = Expr->GetInputName(i);
@@ -539,7 +542,7 @@ void FMatLangPatcher::WireExpressionInput(
 	UMaterialExpression* Expr, const FString& InputName, const FMatLangInput& InputData)
 {
 	FString CamelName = KebabToCamel(InputName);
-	const int32 NumInputs = Expr->CountInputs();
+	const int32 NumInputs = MatBP2FPCompat::CountExpressionInputs(Expr);
 	int32 TargetIdx = -1;
 
 	// Find by name
@@ -631,30 +634,7 @@ void FMatLangPatcher::ApplyOutputChange(const FMatLangDiffEntry& Entry)
 
 void FMatLangPatcher::WireOutputSlot(const FString& SlotName, const FMatLangInput& InputData)
 {
-	UMaterialEditorOnlyData* EditorData = Material->GetEditorOnlyData();
-	if (!EditorData)
-	{
-		Result.NumFailed++;
-		return;
-	}
-
-	// Map slot name to FExpressionInput*
-	FExpressionInput* Target = nullptr;
-	if (SlotName == TEXT("base-color")) Target = &EditorData->BaseColor;
-	else if (SlotName == TEXT("metallic")) Target = &EditorData->Metallic;
-	else if (SlotName == TEXT("specular")) Target = &EditorData->Specular;
-	else if (SlotName == TEXT("roughness")) Target = &EditorData->Roughness;
-	else if (SlotName == TEXT("anisotropy")) Target = &EditorData->Anisotropy;
-	else if (SlotName == TEXT("emissive-color")) Target = &EditorData->EmissiveColor;
-	else if (SlotName == TEXT("opacity")) Target = &EditorData->Opacity;
-	else if (SlotName == TEXT("opacity-mask")) Target = &EditorData->OpacityMask;
-	else if (SlotName == TEXT("normal")) Target = &EditorData->Normal;
-	else if (SlotName == TEXT("tangent")) Target = &EditorData->Tangent;
-	else if (SlotName == TEXT("world-position-offset")) Target = &EditorData->WorldPositionOffset;
-	else if (SlotName == TEXT("subsurface-color")) Target = &EditorData->SubsurfaceColor;
-	else if (SlotName == TEXT("ambient-occlusion")) Target = &EditorData->AmbientOcclusion;
-	else if (SlotName == TEXT("refraction")) Target = &EditorData->Refraction;
-	else if (SlotName == TEXT("pixel-depth-offset")) Target = &EditorData->PixelDepthOffset;
+	FExpressionInput* Target = MatBP2FPCompat::GetMaterialInput(Material, SlotName);
 
 	if (!Target)
 	{

@@ -1,5 +1,8 @@
 # MatBP2FP — Material Blueprint to Functional Programming DSL
 
+> Engine support: UE 4.27 and UE 5.0-5.8. See [COMPATIBILITY.md](COMPATIBILITY.md) for the verified build matrix and old-engine toolchain notes.
+> Cross-version fixtures and automation commands: [Tests/README.md](Tests/README.md).
+
 将 Unreal Engine 材质蓝图 (UMaterial) 转换为 S-expression 函数式 DSL (MatLang)，支持双向转换。
 
 ## 概述

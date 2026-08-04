@@ -2,6 +2,7 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBPExporter.h"
+#include "MatBP2FPVersionCompat.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMatBPExporter, Log, All);
 
@@ -55,7 +56,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPExporter, Log, All);
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialFunction.h"
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2)
 #include "MaterialDomain.h"
+#endif
 
 // ========== Public API ==========
 
@@ -102,7 +105,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::Export()
 	}
 	
 	// First pass: assign IDs to all expressions
-	for (UMaterialExpression* Expr : Material->GetExpressions())
+	for (UMaterialExpression* Expr : MatBP2FPCompat::GetMaterialExpressions(Material))
 	{
 		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
 		{
@@ -111,7 +114,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::Export()
 	}
 	
 	// Second pass: export all expressions
-	for (UMaterialExpression* Expr : Material->GetExpressions())
+	for (UMaterialExpression* Expr : MatBP2FPCompat::GetMaterialExpressions(Material))
 	{
 		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
 		{
@@ -437,7 +440,7 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 void FMatBPExporter::ExportExpressionInputs(UMaterialExpression* Expr, TSharedPtr<FMatExpressionAST> Node)
 {
 	// Iterate over expression inputs using GetInput(index) API
-	const int32 NumInputs = Expr->CountInputs();
+	const int32 NumInputs = MatBP2FPCompat::CountExpressionInputs(Expr);
 	
 	for (int32 i = 0; i < NumInputs; ++i)
 	{
@@ -480,25 +483,18 @@ void FMatBPExporter::ExportOutputs(TSharedPtr<FMaterialGraphAST> AST)
 		}
 	};
 	
-	// Access material inputs through the public accessors
-	// In UE5.x, material inputs are stored in EditorOnlyData
-	if (UMaterialEditorOnlyData* EditorData = Material->GetEditorOnlyData())
+	static const TCHAR* SlotNames[] = {
+		TEXT("base-color"), TEXT("metallic"), TEXT("specular"), TEXT("roughness"),
+		TEXT("anisotropy"), TEXT("emissive-color"), TEXT("opacity"), TEXT("opacity-mask"),
+		TEXT("normal"), TEXT("tangent"), TEXT("world-position-offset"), TEXT("subsurface-color"),
+		TEXT("ambient-occlusion"), TEXT("refraction"), TEXT("pixel-depth-offset")
+	};
+	for (const TCHAR* SlotName : SlotNames)
 	{
-		AddInput(TEXT("base-color"), EditorData->BaseColor);
-		AddInput(TEXT("metallic"), EditorData->Metallic);
-		AddInput(TEXT("specular"), EditorData->Specular);
-		AddInput(TEXT("roughness"), EditorData->Roughness);
-		AddInput(TEXT("anisotropy"), EditorData->Anisotropy);
-		AddInput(TEXT("emissive-color"), EditorData->EmissiveColor);
-		AddInput(TEXT("opacity"), EditorData->Opacity);
-		AddInput(TEXT("opacity-mask"), EditorData->OpacityMask);
-		AddInput(TEXT("normal"), EditorData->Normal);
-		AddInput(TEXT("tangent"), EditorData->Tangent);
-		AddInput(TEXT("world-position-offset"), EditorData->WorldPositionOffset);
-		AddInput(TEXT("subsurface-color"), EditorData->SubsurfaceColor);
-		AddInput(TEXT("ambient-occlusion"), EditorData->AmbientOcclusion);
-		AddInput(TEXT("refraction"), EditorData->Refraction);
-		AddInput(TEXT("pixel-depth-offset"), EditorData->PixelDepthOffset);
+		if (FExpressionInput* Input = MatBP2FPCompat::GetMaterialInput(Material, SlotName))
+		{
+			AddInput(SlotName, *Input);
+		}
 	}
 	
 	for (const auto& MI : MaterialInputs)
@@ -558,7 +554,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
 #endif
 
 	// First pass: assign IDs to all expressions
-	for (UMaterialExpression* Expr : Function->GetExpressions())
+	for (UMaterialExpression* Expr : MatBP2FPCompat::GetFunctionExpressions(Function))
 	{
 		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
 		{
@@ -568,7 +564,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
 
 	// Second pass: export all expressions
 	// FunctionInput and FunctionOutput nodes are part of the graph too
-	for (UMaterialExpression* Expr : Function->GetExpressions())
+	for (UMaterialExpression* Expr : MatBP2FPCompat::GetFunctionExpressions(Function))
 	{
 		if (Expr && !Cast<UMaterialExpressionComment>(Expr))
 		{
@@ -646,7 +642,9 @@ EMatLangShadingModel FMatBPExporter::MapShadingModel(int32 UEShadingModel)
 		case MSM_Eye:                return EMatLangShadingModel::Eye;
 		case MSM_SingleLayerWater:   return EMatLangShadingModel::SingleLayerWater;
 		case MSM_ThinTranslucent:    return EMatLangShadingModel::ThinTranslucent;
+#if ENGINE_MAJOR_VERSION >= 5
 		case MSM_Strata:             return EMatLangShadingModel::Strata;
+#endif
 		default: return EMatLangShadingModel::DefaultLit;
 	}
 }
