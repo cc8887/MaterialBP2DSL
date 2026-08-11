@@ -208,4 +208,67 @@ bool FMatBPCompatStrata_VersionExpectation::RunTest(const FString& Parameters)
 	return true;
 }
 
+MBP_COMPAT_TEST(SpecialInputNames_CanonicalRoundTrip)
+bool FMatBPCompatSpecialInputNames_CanonicalRoundTrip::RunTest(const FString& Parameters)
+{
+	auto SourceExpression = MakeShared<FMatExpressionAST>();
+	SourceExpression->ExprType = TEXT("constant");
+	SourceExpression->Id = TEXT("$const1");
+	SourceExpression->Properties.Add(TEXT("value"), TEXT("1"));
+
+	auto SpecialExpression = MakeShared<FMatExpressionAST>();
+	SpecialExpression->ExprType = TEXT("custom");
+	SpecialExpression->Id = TEXT("$custom2");
+	SpecialExpression->Properties.Add(TEXT("A"), TEXT("\"reflected input text\""));
+
+	const TArray<FString> SpecialNames = {
+		TEXT("A"),
+		TEXT("UV(0-1)"),
+		TEXT("DDX(-UVs)"),
+		TEXT("A!=0"),
+		TEXT("Use Ramp Tex?"),
+		TEXT("[-In] Transparent On"),
+		TEXT("Quote\"\\Pin")
+	};
+	for (const FString& Name : SpecialNames)
+	{
+		SpecialExpression->AddInput(Name, FMatLangConnection(SourceExpression->Id, 0));
+	}
+
+	FMaterialGraphAST Graph;
+	Graph.Name = TEXT("SpecialInputNames");
+	Graph.Expressions.Add(SourceExpression);
+	Graph.Expressions.Add(SpecialExpression);
+	FMatLangInput Output;
+	Output.Name = TEXT("base-color");
+	Output.Connection = FMatLangConnection(SpecialExpression->Id, 0);
+	Graph.Outputs.Slots.Add(Output.Name, Output);
+
+	const FString Canonical = Graph.ToString();
+	TestTrue(TEXT("Parenthesized pin name is quoted"), Canonical.Contains(TEXT(":\"UV(0-1)\"")));
+	TestTrue(TEXT("Operator pin name is quoted"), Canonical.Contains(TEXT(":\"A!=0\"")));
+	TestFalse(TEXT("Reflected property/input collision is omitted"), Canonical.Contains(TEXT("reflected input text")));
+
+	TArray<FMatLangParseError> ParseErrors;
+	const TSharedPtr<FMaterialGraphAST> Parsed = FMatLangParser::Parse(Canonical, ParseErrors);
+	TestTrue(TEXT("Canonical DSL with special pin names parses"), Parsed.IsValid());
+	TestEqual(TEXT("Canonical DSL has no parse errors"), ParseErrors.Num(), 0);
+	if (!Parsed.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FMatExpressionAST> ParsedExpression = Parsed->FindExpression(TEXT("$custom2"));
+	TestTrue(TEXT("Special-name expression is present"), ParsedExpression.IsValid());
+	if (!ParsedExpression.IsValid())
+	{
+		return false;
+	}
+	for (const FString& Name : SpecialNames)
+	{
+		TestNotNull(*FString::Printf(TEXT("Pin name round-trips: %s"), *Name), ParsedExpression->FindInput(Name));
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -267,17 +267,34 @@ FMatLangToken FMatLangTokenizer::ScanKeyword(TArray<FMatLangLexError>& OutErrors
 	int32 StartLine = Line, StartCol = Col, StartOffset = Pos;
 	Advance(); // consume :
 
-	// Support :"quoted key with spaces" form
+	// Support :"quoted key with arbitrary characters" form.
 	if (!IsAtEnd() && Peek() == '"')
 	{
 		Advance(); // consume opening "
 		FString Value;
 		while (!IsAtEnd() && Peek() != '"')
 		{
-			if (Peek() == '\\' && PeekAt(1) == '"')
+			if (Peek() == '\\')
 			{
-				Advance(); // skip backslash
-				Value += Advance();
+				Advance(); // consume backslash
+				if (IsAtEnd())
+				{
+					OutErrors.Add({TEXT("Unterminated quoted keyword escape"), Line, Col, Pos, 1});
+					break;
+				}
+
+				const TCHAR Escaped = Advance();
+				switch (Escaped)
+				{
+					case '"':  Value += '"'; break;
+					case '\\': Value += '\\'; break;
+					case 'n':  Value += '\n'; break;
+					case 't':  Value += '\t'; break;
+					default:
+						OutErrors.Add({FString::Printf(TEXT("Unknown quoted keyword escape '\\%c'"), Escaped), Line, Col - 2, Pos - 2, 2});
+						Value += Escaped;
+						break;
+				}
 			}
 			else
 			{

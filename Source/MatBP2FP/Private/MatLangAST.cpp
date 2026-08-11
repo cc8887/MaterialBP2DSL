@@ -10,6 +10,33 @@ namespace
 		return Value.Replace(TEXT("\\"), TEXT("\\\\"))
 			.Replace(TEXT("\""), TEXT("\\\""));
 	}
+
+	bool IsBareDSLKeyword(const FString& Value)
+	{
+		if (Value.IsEmpty())
+		{
+			return false;
+		}
+
+		for (int32 Index = 0; Index < Value.Len(); ++Index)
+		{
+			const TCHAR Ch = Value[Index];
+			const bool bAsciiAlpha = (Ch >= 'a' && Ch <= 'z') || (Ch >= 'A' && Ch <= 'Z');
+			const bool bDigit = Ch >= '0' && Ch <= '9';
+			if (!bAsciiAlpha && !bDigit && Ch != '-' && Ch != '_' && Ch != '.' && Ch != '/')
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	FString FormatDSLKeyword(const FString& Value)
+	{
+		return IsBareDSLKeyword(Value)
+			? Value
+			: FString::Printf(TEXT("\"%s\""), *EscapeDSLString(Value));
+	}
 }
 
 // ========== FMatLangConnection ==========
@@ -50,13 +77,24 @@ FString FMatExpressionAST::ToString(int32 Indent) const
 	// Properties
 	for (const auto& Pair : Properties)
 	{
+		// A reflected FExpressionInput can also appear as a property on some UE node types.
+		// Connections are authoritative because the DSL cannot represent the same key twice.
+		if (Inputs.ContainsByPredicate([&Pair](const FMatLangInput& Input)
+		{
+			return Input.Name.Equals(Pair.Key, ESearchCase::IgnoreCase);
+		}))
+		{
+			continue;
+		}
+
+		const FString KeyStr = FormatDSLKeyword(Pair.Key);
 		// Values starting with ( or " or [ are already self-delimited DSL values — don't re-quote
 		bool bSelfDelimited = Pair.Value.StartsWith(TEXT("(")) 
 			|| Pair.Value.StartsWith(TEXT("\""))
 			|| Pair.Value.StartsWith(TEXT("["));
 		if (bSelfDelimited)
 		{
-			Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *Pair.Key, *Pair.Value);
+			Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *KeyStr, *Pair.Value);
 		}
 		else
 		{
@@ -64,11 +102,11 @@ FString FMatExpressionAST::ToString(int32 Indent) const
 			bool bNeedsQuote = Pair.Value.Contains(TEXT(" ")) || Pair.Value.Contains(TEXT("/"));
 			if (bNeedsQuote)
 			{
-				Result += FString::Printf(TEXT("\n%s  :%s \"%s\""), *Pad, *Pair.Key, *Pair.Value);
+				Result += FString::Printf(TEXT("\n%s  :%s \"%s\""), *Pad, *KeyStr, *Pair.Value);
 			}
 			else
 			{
-				Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *Pair.Key, *Pair.Value);
+				Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *KeyStr, *Pair.Value);
 			}
 		}
 	}
@@ -77,21 +115,7 @@ FString FMatExpressionAST::ToString(int32 Indent) const
 	for (const FMatLangInput& Input : Inputs)
 	{
 		FString ValueStr = Input.ToString(Indent + 1);
-		// If the input name contains spaces or non-ASCII characters (e.g. Chinese pin names),
-		// quote it as :"name" so the tokenizer reads it as a single keyword token.
-		bool bNeedsQuote = false;
-		for (int32 ci = 0; ci < Input.Name.Len(); ++ci)
-		{
-			TCHAR Ch = Input.Name[ci];
-			if (Ch == ' ' || Ch > 127)
-			{
-				bNeedsQuote = true;
-				break;
-			}
-		}
-		FString KeyStr = bNeedsQuote
-			? FString::Printf(TEXT("\"%s\""), *Input.Name)
-			: Input.Name;
+		const FString KeyStr = FormatDSLKeyword(Input.Name);
 		Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *KeyStr, *ValueStr);
 	}
 	
@@ -167,7 +191,8 @@ FString FMatOutputsAST::ToString(int32 Indent) const
 	for (const auto& Pair : Slots)
 	{
 		FString ValueStr = Pair.Value.ToString(Indent + 1);
-		Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *Pair.Key, *ValueStr);
+		const FString KeyStr = FormatDSLKeyword(Pair.Key);
+		Result += FString::Printf(TEXT("\n%s  :%s %s"), *Pad, *KeyStr, *ValueStr);
 	}
 	
 	Result += TEXT(")");
@@ -178,7 +203,8 @@ FString FMatOutputsAST::ToString(int32 Indent) const
 
 FString FMatParameterDef::ToString() const
 {
-	return FString::Printf(TEXT("(%s :%s :group \"%s\" :default %s)"), *Type, *Name, *Group, *DefaultValue);
+	const FString KeyStr = FormatDSLKeyword(Name);
+	return FString::Printf(TEXT("(%s :%s :group \"%s\" :default %s)"), *Type, *KeyStr, *Group, *DefaultValue);
 }
 
 // ========== FMaterialGraphAST ==========
@@ -264,7 +290,8 @@ FString FMaterialGraphAST::ToString() const
 	// Extra properties
 	for (const auto& Pair : ExtraProperties)
 	{
-		Result += FString::Printf(TEXT("  :%s %s\n"), *Pair.Key, *Pair.Value);
+		const FString KeyStr = FormatDSLKeyword(Pair.Key);
+		Result += FString::Printf(TEXT("  :%s %s\n"), *KeyStr, *Pair.Value);
 	}
 	
 	// Parameters section (informational, derived from expressions)

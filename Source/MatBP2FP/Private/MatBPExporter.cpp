@@ -219,6 +219,25 @@ FString FMatBPExporter::CamelToKebab(const FString& CamelCase)
 	return Result;
 }
 
+static bool CanUseCanonicalInputName(const FString& Name)
+{
+	if (Name.IsEmpty())
+	{
+		return false;
+	}
+	for (int32 Index = 0; Index < Name.Len(); ++Index)
+	{
+		const TCHAR Ch = Name[Index];
+		const bool bAsciiAlpha = (Ch >= 'a' && Ch <= 'z') || (Ch >= 'A' && Ch <= 'Z');
+		const bool bDigit = Ch >= '0' && Ch <= '9';
+		if (!bAsciiAlpha && !bDigit && Ch != '-' && Ch != '_' && Ch != '.' && Ch != '/')
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 TSharedPtr<FMatExpressionAST> FMatBPExporter::ExportExpression(UMaterialExpression* Expr)
 {
 	auto Node = MakeShared<FMatExpressionAST>();
@@ -236,6 +255,22 @@ TSharedPtr<FMatExpressionAST> FMatBPExporter::ExportExpression(UMaterialExpressi
 	
 	// Export inputs as connections
 	ExportExpressionInputs(Expr, Node);
+
+	// Some UE input structs are exposed both through reflection and GetInput(). Keep the
+	// graph connection and discard the reflected text representation of the same slot.
+	for (const FMatLangInput& Input : Node->Inputs)
+	{
+		for (auto PropertyIt = Node->Properties.CreateIterator(); PropertyIt; ++PropertyIt)
+		{
+			if (PropertyIt.Key().Equals(Input.Name, ESearchCase::IgnoreCase))
+			{
+				UE_LOG(LogMatBPExporter, Verbose,
+					TEXT("Skipping reflected property '%s' because it is also an input on %s"),
+					*PropertyIt.Key(), *Expr->GetClass()->GetName());
+				PropertyIt.RemoveCurrent();
+			}
+		}
+	}
 	
 	return Node;
 }
@@ -450,7 +485,18 @@ void FMatBPExporter::ExportExpressionInputs(UMaterialExpression* Expr, TSharedPt
 		
 		// Get input name
 		FName InputName = Expr->GetInputName(i);
-		FString InputNameStr = InputName.IsNone() ? FString::Printf(TEXT("input-%d"), i) : CamelToKebab(InputName.ToString());
+		FString InputNameStr;
+		if (InputName.IsNone())
+		{
+			InputNameStr = FString::Printf(TEXT("input-%d"), i);
+		}
+		else
+		{
+			const FString RawInputName = InputName.ToString();
+			InputNameStr = CanUseCanonicalInputName(RawInputName)
+				? CamelToKebab(RawInputName)
+				: RawInputName;
+		}
 		
 		// Check if connected
 		if (Input->Expression)

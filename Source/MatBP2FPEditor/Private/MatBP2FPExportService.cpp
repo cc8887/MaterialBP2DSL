@@ -4,6 +4,7 @@
 
 #include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
+#include "MatLangLinter.h"
 #include "FMatBP2FPMappingRegistry.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Dom/JsonObject.h"
@@ -216,6 +217,25 @@ FMatBP2FPExportResult FMatBP2FPExportService::ExportAll(const FMatBP2FPExportOpt
 		}
 
 		const FString DSL = AST->ToString();
+		const FMatLangLintResult LintResult = FMatLangLinter::Lint(DSL, AST->AssetPath);
+		if (LintResult.HasErrors())
+		{
+			FString FirstError = TEXT("unknown validation error");
+			for (const FMatLangDiagnostic& Diagnostic : LintResult.Diagnostics)
+			{
+				if (Diagnostic.Severity == EMatLangDiagnosticSeverity::Error)
+				{
+					FirstError = Diagnostic.ToString();
+					break;
+				}
+			}
+			Result.Failures.Add(FString::Printf(
+				TEXT("Generated invalid DSL for %s (%d error(s)): %s"),
+				*AST->AssetPath,
+				LintResult.Count(EMatLangDiagnosticSeverity::Error),
+				*FirstError));
+			continue;
+		}
 		const FString FilePath = BuildOutputPath(AST->AssetPath, OutputDirectory);
 		if (FilePath.IsEmpty())
 		{
