@@ -153,7 +153,7 @@ public:
 	/**
 	 * Convert a Material package path to its corresponding DSL file path.
 	 * Pure path conversion, no registry lookup needed.
-	 *   /Game/Props/M_Wood -> {Project}/Saved/BP2DSL/MatBP/Props/M_Wood.matlang
+	 *   /Game/Props/M_Wood -> {Project}/Saved/BP2DSL/MatBP/Game/Props/M_Wood.matlang
 	 */
 	UFUNCTION(BlueprintCallable, Category="MatBP2FP|Python")
 	static FMatBP2FPPythonResult MaterialPathToDSLPath(const FString& MaterialPath);

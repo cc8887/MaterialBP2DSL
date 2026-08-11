@@ -58,8 +58,8 @@ public:
 
 	/**
 	 * Convert a Material package path to the corresponding DSL file path.
-	 * Convention: /Game/Path/M_Material -> {ProjectDir}/Saved/BP2DSL/MatBP/Path/M_Material.matlang
-	 * Also works with custom mount points: /MyPlugin/Path/M_Material -> .../MatBP/Path/M_Material.matlang
+	 * Convention: /Game/Path/M_Material -> {ProjectDir}/Saved/BP2DSL/MatBP/Game/Path/M_Material.matlang
+	 * Custom mount points remain distinct: /MyPlugin/Path/M -> .../MatBP/MyPlugin/Path/M.matlang
 	 *
 	 * @param MaterialPath  Package path, e.g. /Game/Props/M_Wood
 	 * @return Absolute DSL file path, or empty string if MaterialPath is invalid

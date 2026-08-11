@@ -61,5 +61,10 @@ int32 UMatBP2FPRoundTripCommandlet::Main(const FString& Params)
 	}
 	
 	UE_LOG(LogTemp, Log, TEXT("\n=== Results: %d/%d PASS ==="), Passed, Total);
+	if (Total == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("No exportable materials were found"));
+		return 1;
+	}
 	return (Passed == Total) ? 0 : 1;
 }

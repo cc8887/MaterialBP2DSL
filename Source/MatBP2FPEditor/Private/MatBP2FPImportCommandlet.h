@@ -28,5 +28,5 @@ private:
 	bool bUpdateMode;
 	FString SpecificFile;
 	
-	void ImportFile(const FString& FilePath, const FString& OutputPackagePath);
+	bool ImportFile(const FString& FilePath, const FString& OutputPackagePath);
 };

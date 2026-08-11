@@ -3,6 +3,15 @@
 
 #include "MatLangAST.h"
 
+namespace
+{
+	FString EscapeDSLString(const FString& Value)
+	{
+		return Value.Replace(TEXT("\\"), TEXT("\\\\"))
+			.Replace(TEXT("\""), TEXT("\\\""));
+	}
+}
+
 // ========== FMatLangConnection ==========
 
 FString FMatLangConnection::ToString() const
@@ -190,14 +199,19 @@ FString FMaterialGraphAST::ToString() const
 	if (Kind == EMatLangGraphKind::MaterialFunction)
 	{
 		// MaterialFunction format: (material-function "Name" (function-inputs ...) (function-outputs ...) (expressions ...) (outputs ...))
-		FString Result = FString::Printf(TEXT("(material-function \"%s\"\n"), *Name);
+		FString Result = FString::Printf(TEXT("(material-function \"%s\"\n"), *EscapeDSLString(Name));
+		if (!AssetPath.IsEmpty())
+		{
+			Result += FString::Printf(TEXT("  :asset-path \"%s\"\n"), *EscapeDSLString(AssetPath));
+		}
 
 		if (FunctionInputs.Num() > 0)
 		{
 			Result += TEXT("  (function-inputs\n");
 			for (const FMatParameterDef& Input : FunctionInputs)
 			{
-				Result += FString::Printf(TEXT("    %s\n"), *Input.ToString());
+				Result += FString::Printf(TEXT("    (input :name \"%s\" :sort-priority %d)\n"),
+					*EscapeDSLString(Input.Name), Input.SortPriority);
 			}
 			Result += TEXT("  )\n");
 		}
@@ -207,7 +221,8 @@ FString FMaterialGraphAST::ToString() const
 			Result += TEXT("  (function-outputs\n");
 			for (const FMatParameterDef& Output : FunctionOutputs)
 			{
-				Result += FString::Printf(TEXT("    %s\n"), *Output.ToString());
+				Result += FString::Printf(TEXT("    (output :name \"%s\" :sort-priority %d)\n"),
+					*EscapeDSLString(Output.Name), Output.SortPriority);
 			}
 			Result += TEXT("  )\n");
 		}
@@ -228,7 +243,11 @@ FString FMaterialGraphAST::ToString() const
 	}
 
 	// Material format (original)
-	FString Result = FString::Printf(TEXT("(material \"%s\"\n"), *Name);
+	FString Result = FString::Printf(TEXT("(material \"%s\"\n"), *EscapeDSLString(Name));
+	if (!AssetPath.IsEmpty())
+	{
+		Result += FString::Printf(TEXT("  :asset-path \"%s\"\n"), *EscapeDSLString(AssetPath));
+	}
 	Result += FString::Printf(TEXT("  :domain %s\n"), *MatLangEnums::DomainToString(Domain));
 	Result += FString::Printf(TEXT("  :blend-mode %s\n"), *MatLangEnums::BlendModeToString(BlendMode));
 	Result += FString::Printf(TEXT("  :shading-model %s\n"), *MatLangEnums::ShadingModelToString(ShadingModel));
@@ -369,13 +388,20 @@ FString DomainToString(EMatLangDomain Domain)
 
 EMatLangDomain StringToDomain(const FString& Str)
 {
-	if (Str == TEXT("surface")) return EMatLangDomain::Surface;
-	if (Str == TEXT("deferred-decal")) return EMatLangDomain::DeferredDecal;
-	if (Str == TEXT("light-function")) return EMatLangDomain::LightFunction;
-	if (Str == TEXT("volume")) return EMatLangDomain::Volume;
-	if (Str == TEXT("post-process")) return EMatLangDomain::PostProcess;
-	if (Str == TEXT("user-interface")) return EMatLangDomain::UserInterface;
+	EMatLangDomain Result;
+	if (TryStringToDomain(Str, Result)) return Result;
 	return EMatLangDomain::Surface;
+}
+
+bool TryStringToDomain(const FString& Str, EMatLangDomain& OutDomain)
+{
+	if (Str == TEXT("surface")) { OutDomain = EMatLangDomain::Surface; return true; }
+	if (Str == TEXT("deferred-decal")) { OutDomain = EMatLangDomain::DeferredDecal; return true; }
+	if (Str == TEXT("light-function")) { OutDomain = EMatLangDomain::LightFunction; return true; }
+	if (Str == TEXT("volume")) { OutDomain = EMatLangDomain::Volume; return true; }
+	if (Str == TEXT("post-process")) { OutDomain = EMatLangDomain::PostProcess; return true; }
+	if (Str == TEXT("user-interface")) { OutDomain = EMatLangDomain::UserInterface; return true; }
+	return false;
 }
 
 FString BlendModeToString(EMatLangBlendMode Mode)
@@ -395,14 +421,21 @@ FString BlendModeToString(EMatLangBlendMode Mode)
 
 EMatLangBlendMode StringToBlendMode(const FString& Str)
 {
-	if (Str == TEXT("opaque")) return EMatLangBlendMode::Opaque;
-	if (Str == TEXT("masked")) return EMatLangBlendMode::Masked;
-	if (Str == TEXT("translucent")) return EMatLangBlendMode::Translucent;
-	if (Str == TEXT("additive")) return EMatLangBlendMode::Additive;
-	if (Str == TEXT("modulate")) return EMatLangBlendMode::Modulate;
-	if (Str == TEXT("alpha-composite")) return EMatLangBlendMode::AlphaComposite;
-	if (Str == TEXT("alpha-holdout")) return EMatLangBlendMode::AlphaHoldout;
+	EMatLangBlendMode Result;
+	if (TryStringToBlendMode(Str, Result)) return Result;
 	return EMatLangBlendMode::Opaque;
+}
+
+bool TryStringToBlendMode(const FString& Str, EMatLangBlendMode& OutMode)
+{
+	if (Str == TEXT("opaque")) { OutMode = EMatLangBlendMode::Opaque; return true; }
+	if (Str == TEXT("masked")) { OutMode = EMatLangBlendMode::Masked; return true; }
+	if (Str == TEXT("translucent")) { OutMode = EMatLangBlendMode::Translucent; return true; }
+	if (Str == TEXT("additive")) { OutMode = EMatLangBlendMode::Additive; return true; }
+	if (Str == TEXT("modulate")) { OutMode = EMatLangBlendMode::Modulate; return true; }
+	if (Str == TEXT("alpha-composite")) { OutMode = EMatLangBlendMode::AlphaComposite; return true; }
+	if (Str == TEXT("alpha-holdout")) { OutMode = EMatLangBlendMode::AlphaHoldout; return true; }
+	return false;
 }
 
 FString ShadingModelToString(EMatLangShadingModel Model)
@@ -428,20 +461,27 @@ FString ShadingModelToString(EMatLangShadingModel Model)
 
 EMatLangShadingModel StringToShadingModel(const FString& Str)
 {
-	if (Str == TEXT("unlit")) return EMatLangShadingModel::Unlit;
-	if (Str == TEXT("default-lit")) return EMatLangShadingModel::DefaultLit;
-	if (Str == TEXT("subsurface")) return EMatLangShadingModel::Subsurface;
-	if (Str == TEXT("preintegrated-skin")) return EMatLangShadingModel::PreintegratedSkin;
-	if (Str == TEXT("clear-coat")) return EMatLangShadingModel::ClearCoat;
-	if (Str == TEXT("subsurface-profile")) return EMatLangShadingModel::SubsurfaceProfile;
-	if (Str == TEXT("two-sided-foliage")) return EMatLangShadingModel::TwoSidedFoliage;
-	if (Str == TEXT("hair")) return EMatLangShadingModel::Hair;
-	if (Str == TEXT("cloth")) return EMatLangShadingModel::Cloth;
-	if (Str == TEXT("eye")) return EMatLangShadingModel::Eye;
-	if (Str == TEXT("single-layer-water")) return EMatLangShadingModel::SingleLayerWater;
-	if (Str == TEXT("thin-translucent")) return EMatLangShadingModel::ThinTranslucent;
-	if (Str == TEXT("strata")) return EMatLangShadingModel::Strata;
+	EMatLangShadingModel Result;
+	if (TryStringToShadingModel(Str, Result)) return Result;
 	return EMatLangShadingModel::DefaultLit;
+}
+
+bool TryStringToShadingModel(const FString& Str, EMatLangShadingModel& OutModel)
+{
+	if (Str == TEXT("unlit")) { OutModel = EMatLangShadingModel::Unlit; return true; }
+	if (Str == TEXT("default-lit")) { OutModel = EMatLangShadingModel::DefaultLit; return true; }
+	if (Str == TEXT("subsurface")) { OutModel = EMatLangShadingModel::Subsurface; return true; }
+	if (Str == TEXT("preintegrated-skin")) { OutModel = EMatLangShadingModel::PreintegratedSkin; return true; }
+	if (Str == TEXT("clear-coat")) { OutModel = EMatLangShadingModel::ClearCoat; return true; }
+	if (Str == TEXT("subsurface-profile")) { OutModel = EMatLangShadingModel::SubsurfaceProfile; return true; }
+	if (Str == TEXT("two-sided-foliage")) { OutModel = EMatLangShadingModel::TwoSidedFoliage; return true; }
+	if (Str == TEXT("hair")) { OutModel = EMatLangShadingModel::Hair; return true; }
+	if (Str == TEXT("cloth")) { OutModel = EMatLangShadingModel::Cloth; return true; }
+	if (Str == TEXT("eye")) { OutModel = EMatLangShadingModel::Eye; return true; }
+	if (Str == TEXT("single-layer-water")) { OutModel = EMatLangShadingModel::SingleLayerWater; return true; }
+	if (Str == TEXT("thin-translucent")) { OutModel = EMatLangShadingModel::ThinTranslucent; return true; }
+	if (Str == TEXT("strata")) { OutModel = EMatLangShadingModel::Strata; return true; }
+	return false;
 }
 
 } // namespace MatLangEnums

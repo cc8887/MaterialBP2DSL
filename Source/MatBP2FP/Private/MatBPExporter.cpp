@@ -91,6 +91,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::Export()
 {
 	auto AST = MakeShared<FMaterialGraphAST>();
 	AST->Name = Material->GetName();
+	AST->AssetPath = Material->GetPathName();
 	
 	// Material properties
 	AST->Domain = MapDomain((int32)Material->MaterialDomain);
@@ -522,6 +523,7 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
 {
 	auto AST = MakeShared<FMaterialGraphAST>();
 	AST->Name = Function->GetName();
+	AST->AssetPath = Function->GetPathName();
 	AST->Kind = EMatLangGraphKind::MaterialFunction;
 
 #if WITH_EDITOR
@@ -535,8 +537,8 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
 		if (FuncInput.ExpressionInput)
 		{
 			FMatParameterDef InputDef;
-			InputDef.Name = FuncInput.ExpressionInput->GetName();
-			InputDef.SortPriority = 0;
+			InputDef.Name = FuncInput.ExpressionInput->InputName.ToString();
+			InputDef.SortPriority = FuncInput.ExpressionInput->SortPriority;
 			InputDef.DefaultValue = TEXT("");
 			AST->FunctionInputs.Add(InputDef);
 		}
@@ -547,7 +549,8 @@ TSharedPtr<FMaterialGraphAST> FMatBPExporter::ExportFunction()
 		if (FuncOutput.ExpressionOutput)
 		{
 			FMatParameterDef OutputDef;
-			OutputDef.Name = FuncOutput.ExpressionOutput->GetName();
+			OutputDef.Name = FuncOutput.ExpressionOutput->OutputName.ToString();
+			OutputDef.SortPriority = FuncOutput.ExpressionOutput->SortPriority;
 			AST->FunctionOutputs.Add(OutputDef);
 		}
 	}

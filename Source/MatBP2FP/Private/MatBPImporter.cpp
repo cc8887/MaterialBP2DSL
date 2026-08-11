@@ -4,6 +4,7 @@
 #include "MatBPImporter.h"
 #include "MatBP2FPVersionCompat.h"
 #include "MatLangParser.h"
+#include "MatLangLinter.h"
 #include "MatLangDiffer.h"
 #include "MatLangPatcher.h"
 #include "MatBPExporter.h"
@@ -304,35 +305,46 @@ namespace
 		// since the persisted material stores positions on UMaterialExpression.
 		MaterialGraph->LinkMaterialExpressionsFromGraph();
 	}
+
+	static void MatBP_AppendLintMessages(
+		const FMatLangLintResult& LintResult,
+		TArray<FString>& OutMessages)
+	{
+		for (const FMatLangDiagnostic& Diagnostic : LintResult.Diagnostics)
+		{
+			OutMessages.Add(Diagnostic.ToString());
+		}
+	}
 }
 
 // ========== Public API ==========
 
 FMatBPImporter::FImportResult FMatBPImporter::ImportFromString(const FString& DSLSource, const FString& PackagePath)
 {
-	TArray<FMatLangParseError> ParseErrors;
-	auto AST = FMatLangParser::Parse(DSLSource, ParseErrors);
+	FMatLangLintResult LintResult = FMatLangLinter::Lint(DSLSource);
 	
-	if (!AST)
+	if (LintResult.HasErrors() || !LintResult.AST.IsValid())
 	{
 		FImportResult Res;
-		Res.bSuccess = false;
-		Res.Material = nullptr;
-		Res.ExpressionsCreated = 0;
-		Res.ConnectionsMade = 0;
-		Res.Warnings = ParseErrors.Num();
-		for (const auto& Err : ParseErrors)
-		{
-			Res.Messages.Add(Err.ToString());
-		}
+		Res.Warnings = LintResult.Diagnostics.Num();
+		MatBP_AppendLintMessages(LintResult, Res.Messages);
 		return Res;
 	}
 	
-	return ImportFromAST(AST, PackagePath);
+	return ImportFromAST(LintResult.AST, PackagePath);
 }
 
 FMatBPImporter::FImportResult FMatBPImporter::ImportFromAST(TSharedPtr<FMaterialGraphAST> AST, const FString& PackagePath)
 {
+	const FMatLangLintResult LintResult = FMatLangLinter::LintAST(AST);
+	if (LintResult.HasErrors())
+	{
+		FImportResult Res;
+		Res.Warnings = LintResult.Diagnostics.Num();
+		MatBP_AppendLintMessages(LintResult, Res.Messages);
+		return Res;
+	}
+
 	UMaterial* Mat = CreateMaterial(AST->Name, PackagePath);
 	if (!Mat)
 	{
@@ -349,26 +361,32 @@ FMatBPImporter::FImportResult FMatBPImporter::ImportFromAST(TSharedPtr<FMaterial
 
 FMatBPImporter::FImportResult FMatBPImporter::UpdateMaterial(UMaterial* ExistingMaterial, const FString& DSLSource)
 {
-	TArray<FMatLangParseError> ParseErrors;
-	auto AST = FMatLangParser::Parse(DSLSource, ParseErrors);
+	FMatLangLintResult LintResult = FMatLangLinter::Lint(DSLSource);
 	
-	if (!AST)
+	if (LintResult.HasErrors() || !LintResult.AST.IsValid())
 	{
 		FImportResult Res;
-		Res.bSuccess = false;
 		Res.Material = ExistingMaterial;
-		for (const auto& Err : ParseErrors)
-		{
-			Res.Messages.Add(Err.ToString());
-		}
+		Res.Warnings = LintResult.Diagnostics.Num();
+		MatBP_AppendLintMessages(LintResult, Res.Messages);
 		return Res;
 	}
 	
-	return UpdateMaterialFromAST(ExistingMaterial, AST);
+	return UpdateMaterialFromAST(ExistingMaterial, LintResult.AST);
 }
 
 FMatBPImporter::FImportResult FMatBPImporter::UpdateMaterialFromAST(UMaterial* ExistingMaterial, TSharedPtr<FMaterialGraphAST> AST)
 {
+	const FMatLangLintResult LintResult = FMatLangLinter::LintAST(AST);
+	if (LintResult.HasErrors())
+	{
+		FImportResult Res;
+		Res.Material = ExistingMaterial;
+		Res.Warnings = LintResult.Diagnostics.Num();
+		MatBP_AppendLintMessages(LintResult, Res.Messages);
+		return Res;
+	}
+
 	FMatBPImporter Importer(ExistingMaterial, AST);
 	Importer.ClearMaterial();
 	return Importer.Import();
@@ -386,19 +404,14 @@ FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailed(UMaterial* 
 	}
 
 	// Step 1: Parse new DSL
-	TArray<FMatLangParseError> ParseErrors;
-	auto NewAST = FMatLangParser::Parse(NewDSL, ParseErrors);
-	if (!NewAST)
+	FMatLangLintResult LintResult = FMatLangLinter::Lint(NewDSL);
+	if (LintResult.HasErrors() || !LintResult.AST.IsValid())
 	{
-		Result.bSuccess = false;
-		for (const auto& Err : ParseErrors)
-		{
-			Result.Messages.Add(Err.ToString());
-		}
+		MatBP_AppendLintMessages(LintResult, Result.Messages);
 		return Result;
 	}
 
-	return UpdateMaterialDetailedFromAST(ExistingMaterial, NewAST);
+	return UpdateMaterialDetailedFromAST(ExistingMaterial, LintResult.AST);
 }
 
 FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailedFromAST(
@@ -410,6 +423,13 @@ FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailedFromAST(
 	{
 		Result.bSuccess = false;
 		Result.Messages.Add(TEXT("Null material or AST"));
+		return Result;
+	}
+
+	const FMatLangLintResult LintResult = FMatLangLinter::LintAST(NewAST);
+	if (LintResult.HasErrors())
+	{
+		MatBP_AppendLintMessages(LintResult, Result.Messages);
 		return Result;
 	}
 

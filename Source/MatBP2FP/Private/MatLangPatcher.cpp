@@ -5,6 +5,7 @@
 #include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
 #include "MatLangParser.h"
+#include "MatLangLinter.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMatLangPatcher, Log, All);
 
@@ -44,6 +45,17 @@ FMatLangPatchResult FMatLangPatcher::Apply(
 		FMatLangPatchResult Res;
 		Res.bSuccess = false;
 		Res.Messages.Add(TEXT("Null material or AST"));
+		return Res;
+	}
+
+	const FMatLangLintResult LintResult = FMatLangLinter::LintAST(NewAST);
+	if (LintResult.HasErrors())
+	{
+		FMatLangPatchResult Res;
+		for (const FMatLangDiagnostic& Diagnostic : LintResult.Diagnostics)
+		{
+			Res.Messages.Add(Diagnostic.ToString());
+		}
 		return Res;
 	}
 
@@ -88,17 +100,16 @@ FMatLangPatchResult FMatLangPatcher::IncrementalUpdate(
 	}
 
 	// Step 2: Parse new DSL to NewAST
-	TArray<FMatLangParseError> ParseErrors;
-	TSharedPtr<FMaterialGraphAST> NewAST = FMatLangParser::Parse(NewDSL, ParseErrors);
-	if (!NewAST)
+	FMatLangLintResult LintResult = FMatLangLinter::Lint(NewDSL);
+	if (LintResult.HasErrors() || !LintResult.AST.IsValid())
 	{
-		PatchResult.bSuccess = false;
-		for (const auto& Err : ParseErrors)
+		for (const FMatLangDiagnostic& Diagnostic : LintResult.Diagnostics)
 		{
-			PatchResult.Messages.Add(Err.ToString());
+			PatchResult.Messages.Add(Diagnostic.ToString());
 		}
 		return PatchResult;
 	}
+	TSharedPtr<FMaterialGraphAST> NewAST = LintResult.AST;
 
 	// Step 3: Diff
 	FMatLangDiffResult DiffResult = FMatLangDiffer::Diff(OldAST, NewAST);

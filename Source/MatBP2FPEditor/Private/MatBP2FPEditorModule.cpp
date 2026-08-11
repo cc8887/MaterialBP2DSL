@@ -7,6 +7,7 @@
 #include "MatLangRoundTrip.h"
 #include "MatBP2FPSettings.h"
 #include "MatBP2FPCompilerHook.h"
+#include "MatBP2FPExportService.h"
 #include "FMatBP2FPMappingRegistry.h"
 #include "MatNodeExporter.h"
 #include "ToolMenus.h"
@@ -154,66 +155,16 @@ void FMatBP2FPEditorModule::ExportSelectedMaterials()
 
 void FMatBP2FPEditorModule::ExportAllMaterials()
 {
-	FString OutputDir = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP");
-	IFileManager::Get().MakeDirectory(*OutputDir, true);
-	
-	// Find all materials via AssetRegistry
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-	
-	TArray<FAssetData> MaterialAssets;
-	AssetRegistry.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets, true);
-	
-	// Filter to exportable content only (not engine/system paths)
-	TArray<FAssetData> GameMaterials;
-	for (const FAssetData& Asset : MaterialAssets)
+	FMatBP2FPExportOptions Options;
+	Options.OutputDirectory = GetOutputPath();
+	const FMatBP2FPExportResult Result = FMatBP2FPExportService::ExportAll(Options);
+	for (const FString& Failure : Result.Failures)
 	{
-		if (FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
-		{
-			GameMaterials.Add(Asset);
-		}
+		UE_LOG(LogTemp, Error, TEXT("MatBP2FP export failed: %s"), *Failure);
 	}
-	
-	int32 Exported = 0;
-	int32 Failed = 0;
-	
-	for (const FAssetData& Asset : GameMaterials)
-	{
-		UMaterial* Mat = Cast<UMaterial>(Asset.GetAsset());
-		if (!Mat) { Failed++; continue; }
-		
-		FString DSL = FMatBPExporter::ExportToString(Mat);
-		if (DSL.IsEmpty()) { Failed++; continue; }
-		
-		// Use unified path convention via registry
-		FString PackagePath = Mat->GetPathName();
-		FString FileName = FMatBP2FPMappingRegistry::MaterialToDSLPath(PackagePath);
-		if (FileName.IsEmpty())
-		{
-			Failed++;
-			continue;
-		}
-		
-		FString Dir = FPaths::GetPath(FileName);
-		if (!IFileManager::Get().DirectoryExists(*Dir))
-		{
-			IFileManager::Get().MakeDirectory(*Dir, true);
-		}
-		
-		if (FFileHelper::SaveStringToFile(DSL, *FileName, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-		{
-			Exported++;
-			UE_LOG(LogTemp, Log, TEXT("Exported: %s"), *FileName);
-		}
-		else
-		{
-			Failed++;
-			UE_LOG(LogTemp, Error, TEXT("Failed to write: %s"), *FileName);
-		}
-	}
-	
-	FString Message = FString::Printf(TEXT("MatBP2FP Export: %d/%d materials exported to %s\n(%d failed)"),
-		Exported, GameMaterials.Num(), *OutputDir, Failed);
+	FString Message = FString::Printf(
+		TEXT("MatBP2FP Export: %d material graph assets exported to %s\n%d references indexed, %d failed"),
+		Result.Assets.Num(), *Options.OutputDirectory, Result.References.Num(), Result.Failures.Num());
 	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Message));
 }
 

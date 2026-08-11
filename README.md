@@ -48,7 +48,7 @@ MatBP2FP 是 AnimBP2FP 的姊妹项目，采用相同的架构思路将材质蓝
   (outputs
     :base-color (connect $mul1 0)
     :metallic (connect $const1 0)
-    :roughness 0.5))
+    :roughness (connect $const1 0)))
 ```
 
 ### 语法要素
@@ -93,10 +93,13 @@ MatBP2FPEditor/              (Editor, Default)
 ### Commandlet
 ```bash
 # 导出所有游戏材质
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPExport
+UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -all -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
+
+# Custom output root (default: Saved/BP2DSL/MatBP)
+UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -all -output="Saved/MaterialDSL" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
 # 导出指定材质
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPExport -material=M_Brick
+UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -material=/Game/Materials -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
 # 往返验证
 UnrealEditor.exe "Project.uproject" -run=MatBP2FPRoundTrip
@@ -106,7 +109,18 @@ UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport
 UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -test
 UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -update
 UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -file=path/to/material.matlang
+
+# Lint a file or directory without modifying assets
+UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPLint -path=path/to/material.matlang
+
+# Query definition and incoming/outgoing Material Function references
+UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPRefs -asset="/Game/Functions/MF_Noise.MF_Noise" -direction=both -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 ```
+
+Batch export preserves Unreal mount points in output paths. For example,
+`/Game/Materials/M_Main` becomes `Game/Materials/M_Main.matlang`. The generated
+`matlang-index.json` maps canonical asset paths to files and records call sites;
+reference-query output uses clickable `file:line` locations.
 
 ### 项目设置
 `Edit → Project Settings → Plugins → MatBP2FP`

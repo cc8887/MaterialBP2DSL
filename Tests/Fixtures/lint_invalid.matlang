@@ -1,0 +1,7 @@
+(material "M_InvalidLintFixture"
+  :domain surface
+  (expressions
+    (add $result
+		:a (connect $missing 0)))
+	(outputs
+		:base-color (connect $result 0)))

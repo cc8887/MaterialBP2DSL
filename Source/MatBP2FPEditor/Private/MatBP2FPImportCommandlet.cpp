@@ -53,8 +53,7 @@ int32 UMatBP2FPImportCommandlet::Main(const FString& Params)
 	
 	if (!SpecificFile.IsEmpty())
 	{
-		ImportFile(SpecificFile, OutputPackagePath);
-		return 0;
+		return ImportFile(SpecificFile, OutputPackagePath) ? 0 : 1;
 	}
 	
 	// Find all .matlang files in the export directory
@@ -88,7 +87,7 @@ int32 UMatBP2FPImportCommandlet::Main(const FString& Params)
 		
 		if (Result.bSuccess)
 		{
-			Succeeded++;
+			bool bRoundTripPassed = true;
 			UE_LOG(LogTemp, Log, TEXT("  [OK] %s: %d expressions, %d connections, %d warnings"),
 				*FPaths::GetBaseFilename(File), Result.ExpressionsCreated, Result.ConnectionsMade, Result.Warnings);
 			
@@ -115,6 +114,17 @@ int32 UMatBP2FPImportCommandlet::Main(const FString& Params)
 				float Fidelity = MaxLines > 0 ? (float)(MaxLines - DiffCount) / MaxLines * 100.0f : 100.0f;
 				UE_LOG(LogTemp, Log, TEXT("    Import RoundTrip: %.1f%% fidelity (%d diffs / %d lines)"),
 					Fidelity, DiffCount, MaxLines);
+				bRoundTripPassed = (DiffCount == 0);
+			}
+
+			if (bRoundTripPassed)
+			{
+				Succeeded++;
+			}
+			else
+			{
+				Failed++;
+				UE_LOG(LogTemp, Error, TEXT("  [FAIL] Import round-trip differs from source"));
 			}
 		}
 		else
@@ -132,13 +142,13 @@ int32 UMatBP2FPImportCommandlet::Main(const FString& Params)
 	return (Failed > 0) ? 1 : 0;
 }
 
-void UMatBP2FPImportCommandlet::ImportFile(const FString& FilePath, const FString& OutputPackagePath)
+bool UMatBP2FPImportCommandlet::ImportFile(const FString& FilePath, const FString& OutputPackagePath)
 {
 	FString DSL;
 	if (!FFileHelper::LoadFileToString(DSL, *FilePath))
 	{
 		UE_LOG(LogTemp, Error, TEXT("Failed to read: %s"), *FilePath);
-		return;
+		return false;
 	}
 	
 	if (bUpdateMode)
@@ -170,7 +180,7 @@ void UMatBP2FPImportCommandlet::ImportFile(const FString& FilePath, const FStrin
 					{
 						UE_LOG(LogTemp, Log, TEXT("  %s"), *Msg);
 					}
-					return;
+					return Result.bSuccess;
 				}
 			}
 		}
@@ -183,4 +193,16 @@ void UMatBP2FPImportCommandlet::ImportFile(const FString& FilePath, const FStrin
 		*FPaths::GetBaseFilename(FilePath),
 		Result.bSuccess ? TEXT("SUCCESS") : TEXT("FAILED"),
 		Result.ExpressionsCreated, Result.ConnectionsMade, Result.Warnings);
+	for (const FString& Msg : Result.Messages)
+	{
+		if (Result.bSuccess)
+		{
+			UE_LOG(LogTemp, Log, TEXT("  %s"), *Msg);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("  %s"), *Msg);
+		}
+	}
+	return Result.bSuccess;
 }

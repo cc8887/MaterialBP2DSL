@@ -3,6 +3,7 @@
 
 #include "MatBP2FPPythonBridge.h"
 #include "MatBP2FPVersionCompat.h"
+#include "MatBP2FPExportService.h"
 
 #include "MatBPExporter.h"
 #include "MatBPImporter.h"
@@ -173,9 +174,9 @@ namespace
 				if (MFC->MaterialFunction && !OutVisited.Contains(MFC->MaterialFunction))
 				{
 					OutVisited.Add(MFC->MaterialFunction);
-					OutOrder.Add(MFC->MaterialFunction);
 					// Recurse into the function's own expressions
 					CollectMaterialFunctionDependencies(MatBP2FPCompat::GetFunctionExpressions(MFC->MaterialFunction), OutVisited, OutOrder);
+					OutOrder.Add(MFC->MaterialFunction);
 				}
 			}
 		}
@@ -184,16 +185,7 @@ namespace
 	/** Convert asset object path to output dir subpath: OutputDir/Path/Name.matlang */
 	FString AssetPathToOutputFile(const FString& AssetObjectPath, const FString& OutputDir)
 	{
-		// Use registry for proper mount point handling
-		FString PackagePath = FMatBP2FPMappingRegistry::MaterialToDSLPath(AssetObjectPath);
-		if (!PackagePath.IsEmpty())
-		{
-			return PackagePath;
-		}
-		// Fallback: strip first mount point
-		FString PkgPath = FPackageName::ObjectPathToPackageName(AssetObjectPath);
-		FString Relative = PkgPath.RightChop(PkgPath.Find(TEXT("/"), ESearchCase::IgnoreCase, ESearchDir::FromStart, 1) + 1);
-		return OutputDir / Relative + TEXT(".matlang");
+		return FMatBP2FPExportService::BuildOutputPath(AssetObjectPath, OutputDir);
 	}
 }
 

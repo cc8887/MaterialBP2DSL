@@ -30,6 +30,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "MatLangDiagnostic.h"
 
 // ---- Material Domain ----
 enum class EMatLangDomain : uint8
@@ -80,6 +81,8 @@ struct MATBP2FP_API FMatLangConnection
 {
 	FString TargetId;      // Expression ID (e.g. "$tex1")
 	int32 OutputIndex;     // Which output of the target (usually 0)
+	FMatLangSourceSpan SourceSpan;
+	FMatLangSourceSpan TargetSpan;
 	
 	FMatLangConnection() : OutputIndex(0) {}
 	FMatLangConnection(const FString& InId, int32 InIdx) : TargetId(InId), OutputIndex(InIdx) {}
@@ -98,6 +101,7 @@ struct MATBP2FP_API FMatLangInput
 	// One of these is set:
 	TOptional<FMatLangConnection> Connection;  // Connected to another expression
 	TOptional<FString> LiteralValue;           // Literal (float, vector, etc.)
+	FMatLangSourceSpan SourceSpan;
 	
 	bool IsConnected() const { return Connection.IsSet() && Connection->IsValid(); }
 	bool IsLiteral() const { return LiteralValue.IsSet(); }
@@ -116,6 +120,9 @@ struct MATBP2FP_API FMatExpressionAST
 	FString Id;             // Unique ID within material (e.g. "$tex1", "$mul1")
 	TMap<FString, FString> Properties;  // Non-input properties (:name, :texture, :sampler-type, etc.)
 	TArray<FMatLangInput> Inputs;       // Named inputs with connections or literals
+	FMatLangSourceSpan SourceSpan;
+	FMatLangSourceSpan IdSpan;
+	TMap<FString, FMatLangSourceSpan> PropertySpans;
 	
 	// Editor metadata
 	FVector2D EditorPosition;   // Node position in material editor
@@ -142,6 +149,7 @@ struct MATBP2FP_API FMatOutputsAST
 {
 	// Each output slot can be a connection or a literal
 	TMap<FString, FMatLangInput> Slots;  // "base-color", "metallic", "roughness", "normal", etc.
+	TMap<FString, FMatLangSourceSpan> SlotSpans;
 	
 	FString ToString(int32 Indent = 0) const;
 };
@@ -156,7 +164,7 @@ struct MATBP2FP_API FMatParameterDef
 	FString Type;           // "scalar", "vector", "texture", "static-switch"
 	FString Group;          // Parameter group
 	FString DefaultValue;   // Default value as string
-	int32 SortPriority;
+	int32 SortPriority = 0;
 	
 	FString ToString() const;
 };
@@ -175,6 +183,8 @@ enum class EMatLangGraphKind : uint8
 struct MATBP2FP_API FMaterialGraphAST
 {
 	FString Name;
+	// Canonical Unreal object path used for cross-file references.
+	FString AssetPath;
 	EMatLangGraphKind Kind = EMatLangGraphKind::Material;
 
 	// Material properties (only valid when Kind == Material)
@@ -200,6 +210,8 @@ struct MATBP2FP_API FMaterialGraphAST
 	
 	// Additional material properties as key-value
 	TMap<FString, FString> ExtraProperties;
+	FMatLangSourceSpan SourceSpan;
+	TMap<FString, FMatLangSourceSpan> ExtraPropertySpans;
 	
 	FMaterialGraphAST();
 	
@@ -218,10 +230,13 @@ namespace MatLangEnums
 {
 	MATBP2FP_API FString DomainToString(EMatLangDomain Domain);
 	MATBP2FP_API EMatLangDomain StringToDomain(const FString& Str);
+	MATBP2FP_API bool TryStringToDomain(const FString& Str, EMatLangDomain& OutDomain);
 	
 	MATBP2FP_API FString BlendModeToString(EMatLangBlendMode Mode);
 	MATBP2FP_API EMatLangBlendMode StringToBlendMode(const FString& Str);
+	MATBP2FP_API bool TryStringToBlendMode(const FString& Str, EMatLangBlendMode& OutMode);
 	
 	MATBP2FP_API FString ShadingModelToString(EMatLangShadingModel Model);
 	MATBP2FP_API EMatLangShadingModel StringToShadingModel(const FString& Str);
+	MATBP2FP_API bool TryStringToShadingModel(const FString& Str, EMatLangShadingModel& OutModel);
 }

@@ -4,6 +4,7 @@
 #include "MatLangRoundTrip.h"
 #include "MatBPExporter.h"
 #include "MatLangParser.h"
+#include "MatLangLinter.h"
 #include "Materials/Material.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMatLangRoundTrip, Log, All);
@@ -45,18 +46,18 @@ FMatLangRoundTrip::FRoundTripResult FMatLangRoundTrip::ValidateString(const FStr
 	Result.Fidelity = 0.0f;
 	
 	// Parse
-	TArray<FMatLangParseError> ParseErrors;
-	auto AST = FMatLangParser::Parse(DSLSource, ParseErrors);
+	FMatLangLintResult LintResult = FMatLangLinter::Lint(DSLSource);
 	
-	if (!AST)
+	if (LintResult.HasErrors() || !LintResult.AST.IsValid())
 	{
-		Result.Diffs.Add(TEXT("Parse failed"));
-		for (const auto& Err : ParseErrors)
+		Result.Diffs.Add(TEXT("Lint failed"));
+		for (const FMatLangDiagnostic& Diagnostic : LintResult.Diagnostics)
 		{
-			Result.Diffs.Add(Err.ToString());
+			Result.Diffs.Add(Diagnostic.ToString());
 		}
 		return Result;
 	}
+	const TSharedPtr<FMaterialGraphAST> AST = LintResult.AST;
 	
 	// ToString
 	FString ReconstructedDSL = AST->ToString();

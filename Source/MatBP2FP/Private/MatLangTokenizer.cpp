@@ -66,7 +66,8 @@ bool FMatLangTokenizer::Tokenize(const FString& Source, TArray<FMatLangToken>& O
 	}
 	
 	// Add EOF
-	OutTokens.Add(FMatLangToken(EMatLangTokenType::EndOfFile, TEXT(""), Lexer.Line, Lexer.Col, Lexer.Pos));
+	OutTokens.Add(FMatLangToken(EMatLangTokenType::EndOfFile, TEXT(""), Lexer.Line, Lexer.Col,
+		Lexer.Pos, 0, Lexer.Line, Lexer.Col));
 	
 	return OutErrors.Num() == 0;
 }
@@ -128,7 +129,7 @@ FMatLangToken FMatLangTokenizer::ScanToken(TArray<FMatLangLexError>& OutErrors)
 	if (Ch == ';' && PeekAt(1) == ';') return ScanComment();
 	
 	// Keyword (:name)
-	if (Ch == ':') return ScanKeyword();
+	if (Ch == ':') return ScanKeyword(OutErrors);
 	
 	// Arrow (->) or negative number
 	if (Ch == '-')
@@ -141,20 +142,20 @@ FMatLangToken FMatLangTokenizer::ScanToken(TArray<FMatLangLexError>& OutErrors)
 		}
 		if (IsDigit(PeekAt(1)))
 		{
-			return ScanNumber();
+			return ScanNumber(OutErrors);
 		}
 	}
 	
 	// Number
-	if (IsDigit(Ch)) return ScanNumber();
+	if (IsDigit(Ch)) return ScanNumber(OutErrors);
 	
 	// Identifier, Bool, or $id
-	if (IsIdentChar(Ch) || Ch == '$') return ScanIdentifierOrBool();
+	if (IsIdentChar(Ch) || Ch == '$') return ScanIdentifierOrBool(OutErrors);
 	
 	// Unknown character — error
 	int32 L = Line, C = Col;
 	Advance();
-	OutErrors.Add({FString::Printf(TEXT("Unexpected character '%c'"), Ch), L, C});
+	OutErrors.Add({FString::Printf(TEXT("Unexpected character '%c'"), Ch), L, C, Pos - 1, 1});
 	return MakeToken(EMatLangTokenType::Error, FString(1, &Ch), L, C, Pos - 1);
 }
 
@@ -171,7 +172,7 @@ FMatLangToken FMatLangTokenizer::ScanString(TArray<FMatLangLexError>& OutErrors)
 			Advance(); // consume backslash
 			if (IsAtEnd())
 			{
-				OutErrors.Add({TEXT("Unterminated string escape"), Line, Col});
+				OutErrors.Add({TEXT("Unterminated string escape"), Line, Col, Pos, 1});
 				break;
 			}
 			TCHAR Escaped = Advance();
@@ -181,7 +182,10 @@ FMatLangToken FMatLangTokenizer::ScanString(TArray<FMatLangLexError>& OutErrors)
 				case '\\': Value += '\\'; break;
 				case 'n':  Value += '\n'; break;
 				case 't':  Value += '\t'; break;
-				default:   Value += Escaped; break;
+				default:
+					OutErrors.Add({FString::Printf(TEXT("Unknown string escape '\\%c'"), Escaped), Line, Col - 2, Pos - 2, 2});
+					Value += Escaped;
+					break;
 			}
 		}
 		else
@@ -192,7 +196,7 @@ FMatLangToken FMatLangTokenizer::ScanString(TArray<FMatLangLexError>& OutErrors)
 	
 	if (IsAtEnd())
 	{
-		OutErrors.Add({TEXT("Unterminated string literal"), StartLine, StartCol});
+		OutErrors.Add({TEXT("Unterminated string literal"), StartLine, StartCol, StartOffset, FMath::Max(1, Pos - StartOffset)});
 	}
 	else
 	{
@@ -202,7 +206,7 @@ FMatLangToken FMatLangTokenizer::ScanString(TArray<FMatLangLexError>& OutErrors)
 	return MakeToken(EMatLangTokenType::String, Value, StartLine, StartCol, StartOffset);
 }
 
-FMatLangToken FMatLangTokenizer::ScanNumber()
+FMatLangToken FMatLangTokenizer::ScanNumber(TArray<FMatLangLexError>& OutErrors)
 {
 	int32 StartLine = Line, StartCol = Col, StartOffset = Pos;
 	FString Value;
@@ -235,21 +239,30 @@ FMatLangToken FMatLangTokenizer::ScanNumber()
 	if (!IsAtEnd() && (Peek() == 'e' || Peek() == 'E'))
 	{
 		bIsFloat = true;
+		const int32 ExponentLine = Line;
+		const int32 ExponentCol = Col;
+		const int32 ExponentOffset = Pos;
 		Value += Advance(); // e/E
 		if (!IsAtEnd() && (Peek() == '+' || Peek() == '-'))
 		{
 			Value += Advance();
 		}
+		const int32 DigitsStart = Pos;
 		while (!IsAtEnd() && IsDigit(Peek()))
 		{
 			Value += Advance();
+		}
+		if (DigitsStart == Pos)
+		{
+			OutErrors.Add({TEXT("Exponent requires at least one digit"),
+				ExponentLine, ExponentCol, ExponentOffset, FMath::Max(1, Pos - ExponentOffset)});
 		}
 	}
 	
 	return MakeToken(bIsFloat ? EMatLangTokenType::Float : EMatLangTokenType::Integer, Value, StartLine, StartCol, StartOffset);
 }
 
-FMatLangToken FMatLangTokenizer::ScanKeyword()
+FMatLangToken FMatLangTokenizer::ScanKeyword(TArray<FMatLangLexError>& OutErrors)
 {
 	int32 StartLine = Line, StartCol = Col, StartOffset = Pos;
 	Advance(); // consume :
@@ -271,7 +284,14 @@ FMatLangToken FMatLangTokenizer::ScanKeyword()
 				Value += Advance();
 			}
 		}
-		if (!IsAtEnd()) Advance(); // consume closing "
+		if (!IsAtEnd())
+		{
+			Advance(); // consume closing "
+		}
+		else
+		{
+			OutErrors.Add({TEXT("Unterminated quoted keyword"), StartLine, StartCol, StartOffset, FMath::Max(1, Pos - StartOffset)});
+		}
 		return MakeToken(EMatLangTokenType::Keyword, Value, StartLine, StartCol, StartOffset);
 	}
 
@@ -280,11 +300,15 @@ FMatLangToken FMatLangTokenizer::ScanKeyword()
 	{
 		Value += Advance();
 	}
+	if (Value.IsEmpty())
+	{
+		OutErrors.Add({TEXT("Expected keyword name after ':'"), StartLine, StartCol, StartOffset, 1});
+	}
 	
 	return MakeToken(EMatLangTokenType::Keyword, Value, StartLine, StartCol, StartOffset);
 }
 
-FMatLangToken FMatLangTokenizer::ScanIdentifierOrBool()
+FMatLangToken FMatLangTokenizer::ScanIdentifierOrBool(TArray<FMatLangLexError>& OutErrors)
 {
 	int32 StartLine = Line, StartCol = Col, StartOffset = Pos;
 	FString Value;
@@ -298,6 +322,10 @@ FMatLangToken FMatLangTokenizer::ScanIdentifierOrBool()
 	while (!IsAtEnd() && (IsIdentChar(Peek()) || IsDigit(Peek())))
 	{
 		Value += Advance();
+	}
+	if (Value == TEXT("$"))
+	{
+		OutErrors.Add({TEXT("Expression ID must contain a name after '$'"), StartLine, StartCol, StartOffset, 1});
 	}
 	
 	// Check for booleans
@@ -325,7 +353,7 @@ FMatLangToken FMatLangTokenizer::ScanComment()
 
 FMatLangToken FMatLangTokenizer::MakeToken(EMatLangTokenType Type, const FString& Value, int32 StartLine, int32 StartCol, int32 StartOffset) const
 {
-	return FMatLangToken(Type, Value, StartLine, StartCol, StartOffset);
+	return FMatLangToken(Type, Value, StartLine, StartCol, StartOffset, Pos - StartOffset, Line, Col);
 }
 
 bool FMatLangTokenizer::IsIdentChar(TCHAR Ch) const

@@ -46,14 +46,20 @@ struct MATBP2FP_API FMatLangToken
 	int32 Line;           // 1-based line number
 	int32 Column;         // 1-based column number
 	int32 Offset;         // 0-based character offset in source
+	int32 Length;         // Raw token length in source characters
+	int32 EndLine;        // 1-based exclusive end line
+	int32 EndColumn;      // 1-based exclusive end column
 	
 	FMatLangToken()
-		: Type(EMatLangTokenType::Error), Line(0), Column(0), Offset(0)
+		: Type(EMatLangTokenType::Error), Line(0), Column(0), Offset(0), Length(0), EndLine(0), EndColumn(0)
 	{
 	}
 	
-	FMatLangToken(EMatLangTokenType InType, const FString& InValue, int32 InLine, int32 InCol, int32 InOffset)
-		: Type(InType), Value(InValue), Line(InLine), Column(InCol), Offset(InOffset)
+	FMatLangToken(EMatLangTokenType InType, const FString& InValue, int32 InLine, int32 InCol,
+		int32 InOffset, int32 InLength = 0, int32 InEndLine = 0, int32 InEndColumn = 0)
+		: Type(InType), Value(InValue), Line(InLine), Column(InCol), Offset(InOffset), Length(InLength)
+		, EndLine(InEndLine > 0 ? InEndLine : InLine)
+		, EndColumn(InEndColumn > 0 ? InEndColumn : InCol + InLength)
 	{
 	}
 	
@@ -83,6 +89,8 @@ struct FMatLangLexError
 	FString Message;
 	int32 Line;
 	int32 Column;
+	int32 Offset = INDEX_NONE;
+	int32 Length = 1;
 	
 	FString ToString() const
 	{
@@ -120,9 +128,9 @@ private:
 	
 	FMatLangToken ScanToken(TArray<FMatLangLexError>& OutErrors);
 	FMatLangToken ScanString(TArray<FMatLangLexError>& OutErrors);
-	FMatLangToken ScanNumber();
-	FMatLangToken ScanKeyword();
-	FMatLangToken ScanIdentifierOrBool();
+	FMatLangToken ScanNumber(TArray<FMatLangLexError>& OutErrors);
+	FMatLangToken ScanKeyword(TArray<FMatLangLexError>& OutErrors);
+	FMatLangToken ScanIdentifierOrBool(TArray<FMatLangLexError>& OutErrors);
 	FMatLangToken ScanComment();
 	
 	FMatLangToken MakeToken(EMatLangTokenType Type, const FString& Value, int32 StartLine, int32 StartCol, int32 StartOffset) const;

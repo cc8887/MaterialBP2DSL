@@ -6,6 +6,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/AssetData.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "Materials/Material.h"
@@ -121,13 +122,13 @@ FString FMatBP2FPMappingRegistry::MaterialToDSLPath(const FString& MaterialPath)
 		return FString();
 	}
 
-	// Dynamically strip any content root prefix (e.g., /Game/, /MyPlugin/)
-	// Returns empty for engine/system paths
-	FString RelativePath = StripContentRootPrefix(MaterialPath);
-	if (RelativePath.IsEmpty())
+	const FString PackagePath = FPackageName::ObjectPathToPackageName(MaterialPath);
+	if (!IsExportablePackage(PackagePath))
 	{
 		return FString();
 	}
+	// Preserve the mount point so /Game/X and /Plugin/X never collide.
+	const FString RelativePath = PackagePath.RightChop(1);
 
 	// {ProjectDir}/Saved/BP2DSL/MatBP/Path/M_Material.matlang
 	FString DSLPath = FPaths::ProjectDir() /
@@ -141,7 +142,7 @@ FString FMatBP2FPMappingRegistry::MaterialToDSLPath(const FString& MaterialPath)
 
 FString FMatBP2FPMappingRegistry::DSLToMaterialPath(const FString& DSLFilePath)
 {
-	// Expected: {ProjectDir}/Saved/BP2DSL/MatBP/Path/M_Material.matlang
+	// Expected: {ProjectDir}/Saved/BP2DSL/MatBP/Game/Path/M_Material.matlang
 	FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	FString ExpectedPrefix = ProjectDir / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP") / TEXT("");
 
@@ -150,8 +151,15 @@ FString FMatBP2FPMappingRegistry::DSLToMaterialPath(const FString& DSLFilePath)
 		return FString();
 	}
 
-	// Strip prefix: Path/M_Material.matlang
+	// Strip prefix: Mount/Path/M_Material.matlang
 	FString RelativePath = DSLFilePath.RightChop(ExpectedPrefix.Len());
+	FPaths::NormalizeFilename(RelativePath);
+	const FString Candidate = TEXT("/") +
+		(FPaths::GetPath(RelativePath) / FPaths::GetBaseFilename(RelativePath));
+	if (IsExportablePackage(Candidate) && FPackageName::DoesPackageExist(Candidate))
+	{
+		return Candidate;
+	}
 	FString AssetName = FPaths::GetBaseFilename(RelativePath);
 
 	// Phase 1: Try to resolve via AssetRegistry (supports any mount point)

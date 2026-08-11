@@ -2,12 +2,10 @@
 // Copyright (c) 2026 OpenClaw Research. All Rights Reserved.
 
 #include "MatBP2FPExportCommandlet.h"
-#include "MatBP2FPVersionCompat.h"
-#include "MatBPExporter.h"
-#include "FMatBP2FPMappingRegistry.h"
-#include "Materials/Material.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Misc/FileHelper.h"
+#include "MatBP2FPExportService.h"
+#include "Misc/App.h"
+#include "Misc/CommandLine.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 
 UMatBP2FPExportCommandlet::UMatBP2FPExportCommandlet()
@@ -22,84 +20,57 @@ int32 UMatBP2FPExportCommandlet::Main(const FString& Params)
 {
 	UE_LOG(LogTemp, Log, TEXT("=== MatBP2FP Export Commandlet ==="));
 
-	FString OutputDir = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP");
-	IFileManager::Get().MakeDirectory(*OutputDir, true);
-	
-	// Parse params
+	FMatBP2FPExportOptions Options;
+	Options.OutputDirectory = FPaths::ProjectDir() / TEXT("Saved") / TEXT("BP2DSL") / TEXT("MatBP");
+
 	TArray<FString> Tokens;
 	TArray<FString> Switches;
 	TMap<FString, FString> ParamMap;
 	ParseCommandLine(*Params, Tokens, Switches, ParamMap);
 	
-	FString MaterialPath;
+	if (const FString* Found = ParamMap.Find(TEXT("output")))
+	{
+		Options.OutputDirectory = FPaths::IsRelative(*Found)
+			? FPaths::ProjectDir() / *Found : *Found;
+	}
 	if (const FString* Found = ParamMap.Find(TEXT("material")))
 	{
-		MaterialPath = *Found;
+		Options.AssetFilter = FPackageName::ObjectPathToPackageName(*Found);
 	}
-	bool bAll = Switches.Contains(TEXT("all"));
-	
-	// Find materials
-	FAssetRegistryModule& ARModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AR = ARModule.Get();
-	AR.SearchAllAssets(true);
-	
-	TArray<FAssetData> MaterialAssets;
-	AR.GetAssetsByClass(MATBP2FP_ASSET_CLASS(UMaterial), MaterialAssets, true);
-	
-	int32 Exported = 0;
-	int32 Failed = 0;
-	
-	for (const FAssetData& Asset : MaterialAssets)
+	if (const FString* Found = ParamMap.Find(TEXT("path")))
 	{
-		if (!bAll && !MaterialPath.IsEmpty())
-		{
-			if (!Asset.PackageName.ToString().Contains(MaterialPath))
-			{
-				continue;
-			}
-		}
-		else if (!bAll)
-		{
-			// Default: only exportable content (not engine/system)
-			if (!FMatBP2FPMappingRegistry::IsExportablePackage(Asset.PackageName.ToString()))
-			{
-				continue;
-			}
-		}
-		
-		UMaterial* Mat = Cast<UMaterial>(Asset.GetAsset());
-		if (!Mat) { Failed++; continue; }
-		
-		FString DSL = FMatBPExporter::ExportToString(Mat);
-		if (DSL.IsEmpty()) { Failed++; continue; }
-		
-		// Use unified path convention via registry
-		FString PackagePath = Mat->GetPathName();
-		FString FileName = FMatBP2FPMappingRegistry::MaterialToDSLPath(PackagePath);
-		if (FileName.IsEmpty())
-		{
-			Failed++;
-			UE_LOG(LogTemp, Warning, TEXT("  Cannot resolve DSL path for: %s"), *Mat->GetName());
-			continue;
-		}
-		
-		FString Dir = FPaths::GetPath(FileName);
-		if (!IFileManager::Get().DirectoryExists(*Dir))
-		{
-			IFileManager::Get().MakeDirectory(*Dir, true);
-		}
-		if (FFileHelper::SaveStringToFile(DSL, *FileName, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-		{
-			Exported++;
-			UE_LOG(LogTemp, Log, TEXT("  [OK] %s -> %s"), *Mat->GetName(), *FileName);
-		}
-		else
-		{
-			Failed++;
-			UE_LOG(LogTemp, Error, TEXT("  [FAIL] Failed to write: %s"), *FileName);
-		}
+		Options.AssetFilter = FPackageName::ObjectPathToPackageName(*Found);
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("\n=== Export Complete: %d exported, %d failed ==="), Exported, Failed);
-	return (Failed > 0) ? 1 : 0;
+	Options.bIncludeEngine = FParse::Param(*Params, TEXT("include-engine"));
+	Options.bIncludeMaterials = !FParse::Param(*Params, TEXT("functions-only"));
+	Options.bIncludeFunctions = !FParse::Param(*Params, TEXT("materials-only"));
+
+	if (!FParse::Param(FCommandLine::Get(), TEXT("NullRHI")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("-NullRHI was not supplied; CI export should run with -NullRHI"));
+	}
+	if (!FApp::IsUnattended() && !FParse::Param(FCommandLine::Get(), TEXT("Unattended")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("-Unattended was not supplied; CI export should run unattended"));
+	}
+
+	const FMatBP2FPExportResult Result = FMatBP2FPExportService::ExportAll(Options);
+	for (const FMatBP2FPExportedAsset& Asset : Result.Assets)
+	{
+		UE_LOG(LogTemp, Log, TEXT("  [OK] %s -> %s"), *Asset.AssetPath, *Asset.FilePath);
+	}
+	for (const FString& Failure : Result.Failures)
+	{
+		UE_LOG(LogTemp, Error, TEXT("  [FAIL] %s"), *Failure);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("=== Export Complete: %d asset(s), %d reference(s), %d failure(s) ==="),
+		Result.Assets.Num(), Result.References.Num(), Result.Failures.Num());
+	UE_LOG(LogTemp, Log, TEXT("Reference index: %s"), *Result.IndexFilePath);
+	if (Result.Assets.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("No matching material graph assets were exported"));
+		return 1;
+	}
+	return Result.Succeeded() ? 0 : 1;
 }

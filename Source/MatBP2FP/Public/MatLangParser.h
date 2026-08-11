@@ -15,11 +15,21 @@ struct MATBP2FP_API FMatLangParseError
 	FString Message;
 	int32 Line;
 	int32 Column;
+	FString RuleId = TEXT("ML0002");
+	FMatLangSourceSpan Span;
 	
 	FString ToString() const
 	{
 		return FString::Printf(TEXT("Parse error at %d:%d: %s"), Line, Column, *Message);
 	}
+};
+
+struct MATBP2FP_API FMatLangParseResult
+{
+	TSharedPtr<FMaterialGraphAST> AST;
+	TArray<FMatLangDiagnostic> Diagnostics;
+
+	bool HasErrors() const;
 };
 
 /**
@@ -44,6 +54,7 @@ struct MATBP2FP_API FMatLangParseError
 class MATBP2FP_API FMatLangParser
 {
 public:
+	static FMatLangParseResult ParseDocument(const FString& Source, const FString& FilePath = TEXT(""));
 	static TSharedPtr<FMaterialGraphAST> Parse(const FString& Source, TArray<FMatLangParseError>& OutErrors);
 	static TSharedPtr<FMaterialGraphAST> ParseTokens(const TArray<FMatLangToken>& Tokens, TArray<FMatLangParseError>& OutErrors);
 
@@ -51,6 +62,8 @@ private:
 	const TArray<FMatLangToken>& Tokens;
 	int32 Pos;
 	TArray<FMatLangParseError>& Errors;
+	TSet<FString> SeenTopLevelKeys;
+	TSet<FString> SeenTopLevelBlocks;
 	
 	FMatLangParser(const TArray<FMatLangToken>& InTokens, TArray<FMatLangParseError>& InErrors);
 	
@@ -67,6 +80,7 @@ private:
 	// Error handling
 	void Error(const FString& Message);
 	void ErrorAt(const FMatLangToken& Token, const FString& Message);
+	void ErrorAt(const FMatLangToken& Token, const FString& RuleId, const FString& Message);
 	void Synchronize();
 	
 	// Parsing rules
@@ -76,6 +90,7 @@ private:
 	TSharedPtr<FMatExpressionAST> ParseExprDef();
 	void ParseOutputs(TSharedPtr<FMaterialGraphAST> AST);
 	void ParseParameters(TSharedPtr<FMaterialGraphAST> AST);
+	void ParseFunctionParameters(TSharedPtr<FMaterialGraphAST> AST, bool bInputs);
 	FString ParseValue();           // Literal, (connect ...), (asset ...), [...]
 	FMatLangConnection ParseConnect();  // (connect $id output-index?)
 	

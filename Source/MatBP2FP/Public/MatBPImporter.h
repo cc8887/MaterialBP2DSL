@@ -26,6 +26,10 @@ public:
 		int32 ConnectionsMade;
 		int32 Warnings;
 		TArray<FString> Messages;
+
+		FImportResult()
+			: bSuccess(false), Material(nullptr), ExpressionsCreated(0)
+			, ConnectionsMade(0), Warnings(0) {}
 	};
 
 	/** Detailed update result — includes incremental vs full-rebuild info */
