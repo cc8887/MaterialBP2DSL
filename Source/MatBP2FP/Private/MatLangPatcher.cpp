@@ -4,6 +4,7 @@
 #include "MatLangPatcher.h"
 #include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
+#include "MatBPImporter.h"
 #include "MatLangParser.h"
 #include "MatLangLinter.h"
 
@@ -28,6 +29,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatLangPatcher, Log, All);
 #include "Materials/MaterialExpressionFresnel.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionIf.h"
 #if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2)
 #include "MaterialDomain.h"
@@ -60,6 +62,14 @@ FMatLangPatchResult FMatLangPatcher::Apply(
 	}
 
 	FMatLangPatcher Patcher(Material, NewAST);
+	TArray<FString> FunctionCallMessages;
+	if (!FMatBPImporter::NormalizeAndValidateMaterialGraph(Material, FunctionCallMessages))
+	{
+		Patcher.Result.bSuccess = false;
+		Patcher.Result.NumFailed += FunctionCallMessages.Num();
+		Patcher.Result.Messages.Append(FunctionCallMessages);
+		return Patcher.Result;
+	}
 	Patcher.BuildExpressionMap();
 
 	for (const FMatLangDiffEntry& Entry : DiffResult.Entries)
@@ -67,7 +77,22 @@ FMatLangPatchResult FMatLangPatcher::Apply(
 		Patcher.ApplyEntry(Entry);
 	}
 
+	FunctionCallMessages.Reset();
+	if (!FMatBPImporter::NormalizeAndValidateMaterialGraph(Material, FunctionCallMessages))
+	{
+		Patcher.Result.NumFailed += FunctionCallMessages.Num();
+		Patcher.Result.Messages.Append(FunctionCallMessages);
+		Patcher.Result.bSuccess = false;
+		return Patcher.Result;
+	}
+
 	Patcher.RecompileMaterial();
+	FunctionCallMessages.Reset();
+	if (!FMatBPImporter::NormalizeAndValidateMaterialGraph(Material, FunctionCallMessages))
+	{
+		Patcher.Result.NumFailed += FunctionCallMessages.Num();
+		Patcher.Result.Messages.Append(FunctionCallMessages);
+	}
 	Patcher.Result.bSuccess = (Patcher.Result.NumFailed == 0);
 
 	Patcher.Info(FString::Printf(TEXT("Patch complete: %d applied, %d skipped, %d failed"),
@@ -132,7 +157,12 @@ FMatLangPatchResult FMatLangPatcher::IncrementalUpdate(
 
 	if (DiffResult.IsEmpty())
 	{
-		PatchResult.bSuccess = true;
+		PatchResult.bSuccess = FMatBPImporter::NormalizeAndValidateMaterialGraph(
+			Material, PatchResult.Messages);
+		if (!PatchResult.bSuccess)
+		{
+			PatchResult.NumFailed += PatchResult.Messages.Num();
+		}
 		PatchResult.Messages.Add(TEXT("No changes detected"));
 		return PatchResult;
 	}
@@ -349,6 +379,13 @@ void FMatLangPatcher::SetExpressionPropertyFromAST(
 	UMaterialExpression* Expr, const FString& Key, const FString& Value)
 {
 	// Type-specific handling (same logic as Importer::SetExpressionProperties but for single property)
+	if (Cast<UMaterialExpressionNamedRerouteUsage>(Expr) && Key == TEXT("declaration"))
+	{
+		// Legacy DSL stored an object path here. DeclarationGuid is authoritative;
+		// graph normalization rebinds the native pointer before compilation.
+		Result.NumSkipped++;
+		return;
+	}
 
 	// ---- Constants ----
 	if (auto* C = Cast<UMaterialExpressionConstant>(Expr))

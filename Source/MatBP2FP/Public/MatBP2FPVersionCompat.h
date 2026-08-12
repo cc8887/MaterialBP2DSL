@@ -148,16 +148,14 @@ namespace MatBP2FPCompat
 
 	inline void ClearMaterialInputs(UMaterial* Material)
 	{
-		static const TCHAR* SlotNames[] = {
-			TEXT("base-color"), TEXT("metallic"), TEXT("specular"), TEXT("roughness"),
-			TEXT("anisotropy"), TEXT("emissive-color"), TEXT("opacity"), TEXT("opacity-mask"),
-			TEXT("normal"), TEXT("tangent"), TEXT("world-position-offset"), TEXT("subsurface-color"),
-			TEXT("ambient-occlusion"), TEXT("refraction"), TEXT("pixel-depth-offset")
-		};
-
-		for (const TCHAR* SlotName : SlotNames)
+		if (!Material)
 		{
-			if (FExpressionInput* Input = GetMaterialInput(Material, SlotName))
+			return;
+		}
+		for (int32 PropertyIndex = 0; PropertyIndex < MP_MAX; ++PropertyIndex)
+		{
+			if (FExpressionInput* Input = Material->GetExpressionInputForProperty(
+				static_cast<EMaterialProperty>(PropertyIndex)))
 			{
 				*Input = FExpressionInput();
 			}

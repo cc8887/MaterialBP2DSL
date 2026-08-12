@@ -55,6 +55,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPExporter, Log, All);
 #include "Materials/MaterialExpressionDistance.h"
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialFunction.h"
 #if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2)
 #include "MaterialDomain.h"
@@ -421,6 +422,26 @@ void FMatBPExporter::ExportExpressionProperties(UMaterialExpression* Expr, TShar
 		{
 			Node->Properties.Add(TEXT("function"), FString::Printf(TEXT("(asset \"%s\")"), *MFC->MaterialFunction->GetPathName()));
 		}
+		return;
+	}
+
+	// Named reroute usages must be serialized by stable GUID, never by UObject path.
+	// A path can resolve to an expression left behind by a previous full rebuild and
+	// make an orphan expression chain reachable from the new material graph.
+	if (auto* Declaration = Cast<UMaterialExpressionNamedRerouteDeclaration>(Expr))
+	{
+		Node->Properties.Add(TEXT("name"), EscapeForDSLString(Declaration->Name.ToString()));
+#if WITH_EDITORONLY_DATA
+		Node->Properties.Add(TEXT("node-color"), EscapeForDSLString(Declaration->NodeColor.ToString()));
+#endif
+		Node->Properties.Add(TEXT("variable-guid"),
+			EscapeForDSLString(Declaration->VariableGuid.ToString(EGuidFormats::Digits)));
+		return;
+	}
+	if (auto* Usage = Cast<UMaterialExpressionNamedRerouteUsage>(Expr))
+	{
+		Node->Properties.Add(TEXT("declaration-guid"),
+			EscapeForDSLString(Usage->DeclarationGuid.ToString(EGuidFormats::Digits)));
 		return;
 	}
 	

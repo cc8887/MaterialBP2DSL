@@ -53,6 +53,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPImporter, Log, All);
 #include "Materials/MaterialExpressionIf.h"
 #include "Materials/MaterialExpressionStaticSwitch.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
+#include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionDesaturation.h"
@@ -66,6 +68,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMatBPImporter, Log, All);
 #include "Factories/MaterialFactoryNew.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
+#include "UObject/UObjectHash.h"
 #include "MaterialEditingLibrary.h"
 
 #include "MatBP2FPModule.h"
@@ -467,7 +470,7 @@ FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailedFromAST(
 	if (DiffResult.IsEmpty())
 	{
 		UE_LOG(LogMatBPImporter, Log, TEXT("UpdateMaterialDetailed: No changes detected"));
-		Result.bSuccess = true;
+		Result.bSuccess = NormalizeAndValidateMaterialGraph(ExistingMaterial, Result.Messages);
 		Result.bUsedIncrementalPatch = true;
 		Result.Messages.Add(TEXT("No changes detected"));
 		return Result;
@@ -483,6 +486,18 @@ FMatBPImporter::FUpdateResult FMatBPImporter::UpdateMaterialDetailedFromAST(
 
 		if (PatchResult.bSuccess)
 		{
+			TArray<FString> FunctionCallMessages;
+			if (!NormalizeAndValidateMaterialGraph(ExistingMaterial, FunctionCallMessages))
+			{
+				Result.bSuccess = false;
+				Result.bUsedIncrementalPatch = true;
+				Result.NumApplied = PatchResult.NumApplied;
+				Result.NumFailed = PatchResult.NumFailed + FunctionCallMessages.Num();
+				Result.Messages.Append(PatchResult.Messages);
+				Result.Messages.Append(FunctionCallMessages);
+				return Result;
+			}
+
 			UE_LOG(LogMatBPImporter, Log, TEXT("UpdateMaterialDetailed: Incremental patch succeeded (%d applied, %d skipped)"),
 				PatchResult.NumApplied, PatchResult.NumSkipped);
 
@@ -557,6 +572,15 @@ FMatBPImporter::FImportResult FMatBPImporter::Import()
 	// Step 4: Wire material outputs
 	WireMaterialOutputs();
 
+	// Resolve non-pin expression references before constructing the editor graph.
+	// In particular, Named Reroute usages must point at declarations from this
+	// expression collection rather than objects left behind by a previous rebuild.
+	if (!NormalizeAndValidateMaterialGraph(Material, Result.Messages))
+	{
+		Result.Warnings++;
+		return Result;
+	}
+
 	// Step 5: Bridge to UMaterialGraph so the AutoLayout engine (which operates on
 	// UEdGraphNode) can arrange the freshly imported expressions.
 	UMaterialGraph* MaterialGraph = MatBP_EnsureMaterialGraph(Material);
@@ -590,12 +614,23 @@ FMatBPImporter::FImportResult FMatBPImporter::Import()
 		MaterialGraph->LinkMaterialExpressionsFromGraph();
 	}
 
+	if (!NormalizeAndValidateMaterialGraph(Material, Result.Messages))
+	{
+		Result.Warnings++;
+		return Result;
+	}
+
 	MatBP_BroadcastPropertyPhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PostPropertyChanges, LifecycleContext, PropertyChanges);
 
 	// Step 6: Update material
 	MatBP_BroadcastFinalizePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PreFinalize, LifecycleContext);
 	Material->PreEditChange(nullptr);
 	Material->PostEditChange();
+	if (!NormalizeAndValidateMaterialGraph(Material, Result.Messages))
+	{
+		Result.Warnings++;
+		return Result;
+	}
 	Material->MarkPackageDirty();
 	MatBP_BroadcastFinalizePhase(MatBP2FPImportLifecycle::EImportLifecyclePhase::PostFinalize, LifecycleContext);
 	
@@ -604,6 +639,221 @@ FMatBPImporter::FImportResult FMatBPImporter::Import()
 		Result.ExpressionsCreated, Result.ConnectionsMade, Result.Warnings));
 	
 	return Result;
+}
+
+bool FMatBPImporter::NormalizeAndValidateMaterialGraph(
+	UMaterial* InMaterial, TArray<FString>& OutMessages)
+{
+	if (!InMaterial)
+	{
+		OutMessages.Add(TEXT("Material function validation failed: null material"));
+		return false;
+	}
+
+	bool bValid = true;
+	bool bRepaired = false;
+	const TArray<UMaterialExpression*> MaterialExpressions =
+		MatBP2FPCompat::GetMaterialExpressions(InMaterial);
+	TSet<UMaterialExpression*> RegisteredExpressions;
+	TMap<FGuid, UMaterialExpressionNamedRerouteDeclaration*> NamedDeclarations;
+
+	for (UMaterialExpression* Expression : MaterialExpressions)
+	{
+		if (!Expression)
+		{
+			OutMessages.Add(TEXT("Material graph validation failed: expression collection contains null"));
+			bValid = false;
+			continue;
+		}
+		if (Expression->GetOuter() != InMaterial)
+		{
+			OutMessages.Add(FString::Printf(
+				TEXT("Material graph validation failed: expression '%s' is not owned by '%s'"),
+				*Expression->GetPathName(), *InMaterial->GetPathName()));
+			bValid = false;
+			continue;
+		}
+
+		RegisteredExpressions.Add(Expression);
+		Expression->Material = InMaterial;
+		Expression->Function = nullptr;
+		Expression->SetFlags(RF_Transactional);
+
+		if (UMaterialExpressionNamedRerouteDeclaration* Declaration =
+			Cast<UMaterialExpressionNamedRerouteDeclaration>(Expression))
+		{
+			if (!Declaration->VariableGuid.IsValid())
+			{
+				OutMessages.Add(FString::Printf(
+					TEXT("Material graph validation failed: named reroute declaration '%s' has no GUID"),
+					*Declaration->GetPathName()));
+				bValid = false;
+			}
+			else if (NamedDeclarations.Contains(Declaration->VariableGuid))
+			{
+				OutMessages.Add(FString::Printf(
+					TEXT("Material graph validation failed: duplicate named reroute GUID %s"),
+					*Declaration->VariableGuid.ToString(EGuidFormats::Digits)));
+				bValid = false;
+			}
+			else
+			{
+				NamedDeclarations.Add(Declaration->VariableGuid, Declaration);
+			}
+		}
+	}
+
+	// Named reroutes are expression references that are not exposed through GetInput().
+	// Rebind them by GUID so legacy DSL UObject paths cannot keep orphan graphs alive.
+	for (UMaterialExpression* Expression : MaterialExpressions)
+	{
+		UMaterialExpressionNamedRerouteUsage* Usage =
+			Cast<UMaterialExpressionNamedRerouteUsage>(Expression);
+		if (!Usage)
+		{
+			continue;
+		}
+
+		UMaterialExpressionNamedRerouteDeclaration* Resolved =
+			NamedDeclarations.FindRef(Usage->DeclarationGuid);
+		if (!Resolved && Usage->Declaration
+			&& RegisteredExpressions.Contains(Usage->Declaration)
+			&& (!Usage->DeclarationGuid.IsValid()
+				|| Usage->DeclarationGuid == Usage->Declaration->VariableGuid))
+		{
+			Resolved = Usage->Declaration;
+		}
+
+		if (!Resolved)
+		{
+			OutMessages.Add(FString::Printf(
+				TEXT("Material graph validation failed: named reroute usage '%s' cannot resolve GUID %s"),
+				*Usage->GetPathName(), *Usage->DeclarationGuid.ToString(EGuidFormats::Digits)));
+			Usage->Declaration = nullptr;
+			bValid = false;
+			continue;
+		}
+
+		if (Usage->Declaration != Resolved)
+		{
+			Usage->Declaration = Resolved;
+			bRepaired = true;
+		}
+		if (Usage->DeclarationGuid != Resolved->VariableGuid)
+		{
+			Usage->DeclarationGuid = Resolved->VariableGuid;
+			bRepaired = true;
+		}
+	}
+
+	// Every ordinary expression connection compiled by the material must resolve to
+	// an expression registered in the same collection. There is no lossless way to
+	// infer a replacement for an arbitrary orphan, so reject it before compilation.
+	for (UMaterialExpression* Expression : MaterialExpressions)
+	{
+		if (!Expression)
+		{
+			continue;
+		}
+		const int32 InputCount = MatBP2FPCompat::CountExpressionInputs(Expression);
+		for (int32 InputIndex = 0; InputIndex < InputCount; ++InputIndex)
+		{
+			FExpressionInput* Input = Expression->GetInput(InputIndex);
+			if (Input && Input->Expression && !RegisteredExpressions.Contains(Input->Expression))
+			{
+				OutMessages.Add(FString::Printf(
+					TEXT("Material graph validation failed: '%s' input %d references unregistered expression '%s'"),
+					*Expression->GetPathName(), InputIndex, *Input->Expression->GetPathName()));
+				bValid = false;
+			}
+		}
+	}
+	for (int32 PropertyIndex = 0; PropertyIndex < MP_MAX; ++PropertyIndex)
+	{
+		FExpressionInput* Input = InMaterial->GetExpressionInputForProperty(
+			static_cast<EMaterialProperty>(PropertyIndex));
+		if (Input && Input->Expression && !RegisteredExpressions.Contains(Input->Expression))
+		{
+			OutMessages.Add(FString::Printf(
+				TEXT("Material graph validation failed: material property %d references unregistered expression '%s'"),
+				PropertyIndex, *Input->Expression->GetPathName()));
+			bValid = false;
+		}
+	}
+
+	if (!bValid)
+	{
+		return false;
+	}
+
+	TSet<UMaterialFunctionInterface*> VisitedFunctions;
+	TFunction<void(const TArray<UMaterialExpression*>&)> RefreshAndValidateExpressions;
+	RefreshAndValidateExpressions = [&OutMessages, &bValid, &VisitedFunctions, &RefreshAndValidateExpressions](
+		const TArray<UMaterialExpression*>& Expressions)
+	{
+		for (UMaterialExpression* Expression : Expressions)
+		{
+			UMaterialExpressionMaterialFunctionCall* FunctionCall =
+				Cast<UMaterialExpressionMaterialFunctionCall>(Expression);
+			if (!FunctionCall)
+			{
+				continue;
+			}
+
+			FunctionCall->UpdateFromFunctionResource(false);
+			const FString FunctionPath = FunctionCall->MaterialFunction
+				? FunctionCall->MaterialFunction->GetPathName()
+				: TEXT("<missing>");
+
+			if (!FunctionCall->MaterialFunction)
+			{
+				OutMessages.Add(FString::Printf(
+					TEXT("Material function validation failed: node '%s' has no function"),
+					*FunctionCall->GetPathName()));
+				bValid = false;
+				continue;
+			}
+
+			for (int32 InputIndex = 0; InputIndex < FunctionCall->FunctionInputs.Num(); ++InputIndex)
+			{
+				const FFunctionExpressionInput& Input = FunctionCall->FunctionInputs[InputIndex];
+				if (!Input.ExpressionInput || !Input.ExpressionInputId.IsValid())
+				{
+					OutMessages.Add(FString::Printf(
+						TEXT("Material function validation failed: node '%s', function '%s', input %d is unresolved"),
+						*FunctionCall->GetPathName(), *FunctionPath, InputIndex));
+					bValid = false;
+				}
+			}
+
+			for (int32 OutputIndex = 0; OutputIndex < FunctionCall->FunctionOutputs.Num(); ++OutputIndex)
+			{
+				const FFunctionExpressionOutput& Output = FunctionCall->FunctionOutputs[OutputIndex];
+				if (!Output.ExpressionOutput || !Output.ExpressionOutputId.IsValid())
+				{
+					OutMessages.Add(FString::Printf(
+						TEXT("Material function validation failed: node '%s', function '%s', output %d is unresolved"),
+						*FunctionCall->GetPathName(), *FunctionPath, OutputIndex));
+					bValid = false;
+				}
+			}
+
+			if (!VisitedFunctions.Contains(FunctionCall->MaterialFunction))
+			{
+				VisitedFunctions.Add(FunctionCall->MaterialFunction);
+				RefreshAndValidateExpressions(
+					MatBP2FPCompat::GetFunctionExpressions(FunctionCall->MaterialFunction));
+			}
+		}
+	};
+
+	RefreshAndValidateExpressions(MaterialExpressions);
+	if (bRepaired)
+	{
+		InMaterial->MarkPackageDirty();
+	}
+
+	return bValid;
 }
 
 UMaterial* FMatBPImporter::CreateMaterial(const FString& Name, const FString& PackagePath)
@@ -664,12 +914,15 @@ UMaterialExpression* FMatBPImporter::CreateExpression(TSharedPtr<FMatExpressionA
 		return nullptr;
 	}
 	
-	UMaterialExpression* Expr = NewObject<UMaterialExpression>(Material, ExprClass);
+	UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, ExprClass, (int32)ExprAST->EditorPosition.X, (int32)ExprAST->EditorPosition.Y);
 	if (!Expr)
 	{
 		Warn(FString::Printf(TEXT("Failed to create expression '%s'"), *ExprAST->Id));
 		return nullptr;
 	}
+	Expr->Material = Material;
+	Expr->Function = nullptr;
 	
 	// Set editor position
 	Expr->MaterialExpressionEditorX = (int32)ExprAST->EditorPosition.X;
@@ -680,9 +933,6 @@ UMaterialExpression* FMatBPImporter::CreateExpression(TSharedPtr<FMatExpressionA
 	{
 		Expr->Desc = ExprAST->Comment;
 	}
-	
-	// Add to material
-	MatBP2FPCompat::AddMaterialExpression(Material, Expr);
 	
 	// Set type-specific properties
 	SetExpressionProperties(ExprAST, Expr);
@@ -797,7 +1047,6 @@ void FMatBPImporter::WireMaterialOutputs()
 	{
 		Mappings.Add({SlotName, MatBP2FPCompat::GetMaterialInput(Material, SlotName)});
 	}
-	
 	for (const auto& Pair : AST->Outputs.Slots)
 	{
 		const FMatLangInput& Output = Pair.Value;
@@ -1049,6 +1298,7 @@ void FMatBPImporter::SetExpressionProperties(TSharedPtr<FMatExpressionAST> ExprA
 	static const TArray<FString> SkipProps = {
 		TEXT("inputs"),               // FExpressionInput array (SetMaterialAttributes)
 		TEXT("attribute-set-types"),  // FGuid array (SetMaterialAttributes)
+		TEXT("declaration"),          // Named reroutes are rebound by DeclarationGuid
 	};
 	for (const auto& Pair : ExprAST->Properties)
 	{
@@ -1173,8 +1423,55 @@ EMaterialShadingModel FMatBPImporter::MapShadingModelToUE(EMatLangShadingModel M
 
 void FMatBPImporter::ClearMaterial()
 {
-	// Remove all existing expressions
-	MatBP2FPCompat::ClearMaterialExpressions(Material);
+	// Older MatBP2FP rebuilds emptied the expression array without destroying its
+	// objects. Gather those direct children before deleting the registered graph so
+	// stale UObject paths cannot keep historical expression chains in the package.
+	const TArray<UMaterialExpression*> RegisteredExpressionSnapshot =
+		MatBP2FPCompat::GetMaterialExpressions(Material);
+	TSet<UMaterialExpression*> RegisteredExpressions;
+	for (UMaterialExpression* Expression : RegisteredExpressionSnapshot)
+	{
+		RegisteredExpressions.Add(Expression);
+	}
+	TArray<UObject*> DirectChildren;
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+	GetObjectsWithOuter(Material, DirectChildren, EGetObjectsFlags::None);
+#else
+	GetObjectsWithOuter(Material, DirectChildren, false);
+#endif
+	TArray<UMaterialExpression*> OrphanExpressions;
+	for (UObject* Child : DirectChildren)
+	{
+		UMaterialExpression* Expression = Cast<UMaterialExpression>(Child);
+		if (IsValid(Expression)
+			&& !RegisteredExpressions.Contains(Expression)
+			&& !Expression->IsA<UMaterialExpressionComment>())
+		{
+			OrphanExpressions.Add(Expression);
+		}
+	}
+
+	// Use the engine's deletion path so every material property is disconnected,
+	// parameter caches are updated, and removed expressions cannot be resolved by
+	// an object path during the replacement import.
+	// DeleteAllMaterialExpressions mutates the same expression view it iterates in
+	// newer engine versions. Iterate our snapshot so no registered node is skipped.
+	for (UMaterialExpression* Expression : RegisteredExpressionSnapshot)
+	{
+		if (IsValid(Expression))
+		{
+			UMaterialEditingLibrary::DeleteMaterialExpression(Material, Expression);
+		}
+	}
+	for (UMaterialExpression* OrphanExpression : OrphanExpressions)
+	{
+		UMaterialEditingLibrary::DeleteMaterialExpression(Material, OrphanExpression);
+	}
+	if (OrphanExpressions.Num() > 0)
+	{
+		UE_LOG(LogMatBPImporter, Log, TEXT("Removed %d orphan material expressions before rebuild"),
+			OrphanExpressions.Num());
+	}
 	MatBP2FPCompat::ClearMaterialInputs(Material);
 }
 

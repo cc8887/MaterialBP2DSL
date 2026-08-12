@@ -94,6 +94,12 @@ public:
 	 */
 	static FUpdateResult UpdateMaterialDetailedFromAST(UMaterial* ExistingMaterial, TSharedPtr<FMaterialGraphAST> NewAST);
 
+	/**
+	 * Restore native cross-node references, rebuild transient function pins, and
+	 * verify that every compiled expression belongs to the material collection.
+	 */
+	static bool NormalizeAndValidateMaterialGraph(UMaterial* Material, TArray<FString>& OutMessages);
+
 #if WITH_EDITOR
 private:
 	UMaterial* Material;

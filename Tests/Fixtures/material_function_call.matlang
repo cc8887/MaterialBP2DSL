@@ -1,0 +1,21 @@
+;; Function call routed through a named reroute. This covers non-pin expression
+;; references that must be rebound when a material is rebuilt in place.
+(material "M_MaterialFunctionCall"
+  :domain surface
+  :blend-mode opaque
+  :shading-model default-lit
+  :two-sided false
+
+  (expressions
+    (material-function-call $fn1
+      :function (asset "/Engine/Functions/Engine_MaterialFunctions01/Opacity/CameraDepthFade.CameraDepthFade"))
+    (named-reroute-declaration $named-2
+      :name "FunctionValue"
+      :node-color "(R=0.100000,G=0.200000,B=0.300000,A=1.000000)"
+      :variable-guid "11111111222222223333333344444444"
+      :input (connect $fn1))
+    (named-reroute-usage $named-3
+      :declaration-guid "11111111222222223333333344444444"))
+
+  (outputs
+    :emissive-color (connect $named-3 0)))

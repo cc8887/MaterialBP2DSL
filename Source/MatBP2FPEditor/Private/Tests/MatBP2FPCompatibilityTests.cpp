@@ -4,6 +4,10 @@
 #include "CoreMinimal.h"
 #include "Interfaces/IPluginManager.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
+#include "MaterialEditor/PreviewMaterial.h"
+#include "MatBP2FPVersionCompat.h"
 #include "MatBPExporter.h"
 #include "MatBPImporter.h"
 #include "MatLangParser.h"
@@ -57,6 +61,80 @@ namespace MatBP2FPCompatibilityTests
 			Material->RemoveFromRoot();
 		}
 	}
+
+	UMaterialExpressionMaterialFunctionCall* FindFunctionCall(UMaterial* Material)
+	{
+		if (!Material)
+		{
+			return nullptr;
+		}
+		for (UMaterialExpression* Expression : MatBP2FPCompat::GetMaterialExpressions(Material))
+		{
+			if (UMaterialExpressionMaterialFunctionCall* FunctionCall =
+				Cast<UMaterialExpressionMaterialFunctionCall>(Expression))
+			{
+				return FunctionCall;
+			}
+		}
+		return nullptr;
+	}
+
+	template<typename ExpressionType>
+	ExpressionType* FindExpression(UMaterial* Material)
+	{
+		if (!Material)
+		{
+			return nullptr;
+		}
+		for (UMaterialExpression* Expression : MatBP2FPCompat::GetMaterialExpressions(Material))
+		{
+			if (ExpressionType* Match = Cast<ExpressionType>(Expression))
+			{
+				return Match;
+			}
+		}
+		return nullptr;
+	}
+
+	void ClearTransientFunctionPins(UMaterialExpressionMaterialFunctionCall* FunctionCall)
+	{
+		if (!FunctionCall)
+		{
+			return;
+		}
+
+		for (FFunctionExpressionInput& Input : FunctionCall->FunctionInputs)
+		{
+			Input.ExpressionInput = nullptr;
+		}
+		for (FFunctionExpressionOutput& Output : FunctionCall->FunctionOutputs)
+		{
+			Output.ExpressionOutput = nullptr;
+		}
+	}
+
+	bool HasResolvedFunctionPins(UMaterialExpressionMaterialFunctionCall* FunctionCall)
+	{
+		if (!FunctionCall || FunctionCall->FunctionOutputs.Num() == 0)
+		{
+			return false;
+		}
+		for (const FFunctionExpressionInput& Input : FunctionCall->FunctionInputs)
+		{
+			if (!Input.ExpressionInput || !Input.ExpressionInputId.IsValid())
+			{
+				return false;
+			}
+		}
+		for (const FFunctionExpressionOutput& Output : FunctionCall->FunctionOutputs)
+		{
+			if (!Output.ExpressionOutput || !Output.ExpressionOutputId.IsValid())
+			{
+				return false;
+			}
+		}
+		return true;
+	}
 }
 
 MBP_COMPAT_TEST(Fixtures_ParseAndCanonicalize)
@@ -67,6 +145,7 @@ bool FMatBPCompatFixtures_ParseAndCanonicalize::RunTest(const FString& Parameter
 		TEXT("dag_shared_inputs.matlang"),
 		TEXT("incremental_before.matlang"),
 		TEXT("incremental_after.matlang"),
+		TEXT("material_function_call.matlang"),
 		TEXT("strata_capability.matlang")
 	};
 
@@ -95,6 +174,110 @@ bool FMatBPCompatFixtures_ParseAndCanonicalize::RunTest(const FString& Parameter
 		TestTrue(FString::Printf(TEXT("Reparse canonical %s"), FixtureName), CanonicalAST.IsValid());
 		TestEqual(FString::Printf(TEXT("No canonical parse errors in %s"), FixtureName), CanonicalErrors.Num(), 0);
 	}
+	return true;
+}
+
+MBP_COMPAT_TEST(MaterialFunctionCall_RefreshAcrossImportAndIncremental)
+bool FMatBPCompatMaterialFunctionCall_RefreshAcrossImportAndIncremental::RunTest(const FString& Parameters)
+{
+	FString Source;
+	FString LoadError;
+	if (!MatBP2FPCompatibilityTests::LoadFixture(TEXT("material_function_call.matlang"), Source, LoadError))
+	{
+		AddError(LoadError);
+		return false;
+	}
+
+	UMaterial* Material = MatBP2FPCompatibilityTests::CreateTransientMaterial();
+	const FMatBPImporter::FImportResult ImportResult = FMatBPImporter::UpdateMaterial(Material, Source);
+	TestTrue(TEXT("Function-call import succeeds"), ImportResult.bSuccess);
+	UMaterialExpressionMaterialFunctionCall* FunctionCall =
+		MatBP2FPCompatibilityTests::FindFunctionCall(Material);
+	UMaterialExpressionNamedRerouteDeclaration* Declaration =
+		MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteDeclaration>(Material);
+	UMaterialExpressionNamedRerouteUsage* Usage =
+		MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteUsage>(Material);
+	TestNotNull(TEXT("Imported function call exists"), FunctionCall);
+	TestNotNull(TEXT("Imported named reroute declaration exists"), Declaration);
+	TestNotNull(TEXT("Imported named reroute usage exists"), Usage);
+	TestTrue(TEXT("Named reroute usage binds to the registered declaration"),
+		Usage && Usage->Declaration == Declaration);
+	TestTrue(TEXT("Import keeps the native function-call node type"),
+		FunctionCall && FunctionCall->GetClass() == UMaterialExpressionMaterialFunctionCall::StaticClass());
+	TestTrue(TEXT("Full import resolves transient function pins"),
+		MatBP2FPCompatibilityTests::HasResolvedFunctionPins(FunctionCall));
+
+	MatBP2FPCompatibilityTests::ClearTransientFunctionPins(FunctionCall);
+	const FMatBPImporter::FUpdateResult NoDiffResult =
+		FMatBPImporter::UpdateMaterialDetailed(Material, Source);
+	TestTrue(TEXT("No-diff update repairs transient function pins"), NoDiffResult.bSuccess);
+	TestTrue(TEXT("No-diff repair resolves every function pin"),
+		MatBP2FPCompatibilityTests::HasResolvedFunctionPins(FunctionCall));
+
+	MatBP2FPCompatibilityTests::ClearTransientFunctionPins(FunctionCall);
+	const FString IncrementalSource = Source.Replace(TEXT(":two-sided false"), TEXT(":two-sided true"));
+	const FMatBPImporter::FUpdateResult IncrementalResult =
+		FMatBPImporter::UpdateMaterialDetailed(Material, IncrementalSource);
+	TestTrue(TEXT("Incremental update repairs before recompilation"), IncrementalResult.bSuccess);
+	TestTrue(TEXT("Function-call update remains incremental"), IncrementalResult.bUsedIncrementalPatch);
+	TestTrue(TEXT("Incremental repair resolves every function pin"),
+		MatBP2FPCompatibilityTests::HasResolvedFunctionPins(FunctionCall));
+
+	// Simulate an expression object left behind by the pre-fix full-rebuild path.
+	// It is owned by the material but intentionally absent from its expression list.
+	UMaterialExpressionMaterialFunctionCall* HistoricalOrphan =
+		NewObject<UMaterialExpressionMaterialFunctionCall>(Material);
+	HistoricalOrphan->Material = Material;
+	HistoricalOrphan->MaterialFunction = FunctionCall ? FunctionCall->MaterialFunction : nullptr;
+	HistoricalOrphan->UpdateFromFunctionResource(false);
+	TestFalse(TEXT("Historical orphan is not registered in the material graph"),
+		MatBP2FPCompat::GetMaterialExpressions(Material).Contains(HistoricalOrphan));
+
+	// Legacy exports serialized the declaration UObject path. Rebuilding the same
+	// material must ignore that old object and bind the usage by stable GUID.
+	const FString OldDeclarationPath = Declaration ? Declaration->GetPathName() : TEXT("None");
+	const FString LegacySource = Source.Replace(
+		TEXT(":declaration-guid \"11111111222222223333333344444444\""),
+		*FString::Printf(TEXT(":declaration \"%s\"\n      :declaration-guid \"11111111222222223333333344444444\""),
+			*OldDeclarationPath));
+	UMaterialExpressionNamedRerouteDeclaration* OldDeclaration = Declaration;
+	const FMatBPImporter::FImportResult RebuildResult =
+		FMatBPImporter::UpdateMaterial(Material, LegacySource);
+	TestTrue(TEXT("Full rebuild accepts legacy named-reroute object paths"), RebuildResult.bSuccess);
+	TestFalse(TEXT("Full rebuild destroys historical orphan expressions"), IsValid(HistoricalOrphan));
+	Declaration = MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteDeclaration>(Material);
+	Usage = MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteUsage>(Material);
+	FunctionCall = MatBP2FPCompatibilityTests::FindFunctionCall(Material);
+	TestTrue(TEXT("Full rebuild creates a new declaration"), Declaration && Declaration != OldDeclaration);
+	TestTrue(TEXT("Legacy path is rebound to the new registered declaration"),
+		Usage && Usage->Declaration == Declaration);
+	TestTrue(TEXT("Rebound declaration belongs to the material expression collection"),
+		Declaration && MatBP2FPCompat::GetMaterialExpressions(Material).Contains(Declaration));
+	TestTrue(TEXT("Function behind rebound named reroute has resolved pins"),
+		MatBP2FPCompatibilityTests::HasResolvedFunctionPins(FunctionCall));
+
+	UMaterial* PreviewMaterial = Cast<UMaterial>(StaticDuplicateObject(
+		Material, GetTransientPackage(), NAME_None, ~RF_Standalone, UPreviewMaterial::StaticClass()));
+	TestNotNull(TEXT("Editor-style preview duplication succeeds"), PreviewMaterial);
+	if (PreviewMaterial)
+	{
+		PreviewMaterial->AddToRoot();
+		UMaterialExpressionMaterialFunctionCall* PreviewFunctionCall =
+			MatBP2FPCompatibilityTests::FindFunctionCall(PreviewMaterial);
+		UMaterialExpressionNamedRerouteDeclaration* PreviewDeclaration =
+			MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteDeclaration>(PreviewMaterial);
+		UMaterialExpressionNamedRerouteUsage* PreviewUsage =
+			MatBP2FPCompatibilityTests::FindExpression<UMaterialExpressionNamedRerouteUsage>(PreviewMaterial);
+		TestTrue(TEXT("Editor-style duplication preserves resolved function pins"),
+			MatBP2FPCompatibilityTests::HasResolvedFunctionPins(PreviewFunctionCall));
+		TestTrue(TEXT("Editor-style duplication keeps named reroutes inside the preview graph"),
+			PreviewUsage && PreviewUsage->Declaration == PreviewDeclaration);
+		PreviewMaterial->PreEditChange(nullptr);
+		PreviewMaterial->PostEditChange();
+		PreviewMaterial->RemoveFromRoot();
+	}
+
+	MatBP2FPCompatibilityTests::ReleaseTransientMaterial(Material);
 	return true;
 }
 
