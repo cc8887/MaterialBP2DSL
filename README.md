@@ -1,26 +1,20 @@
-# MatBP2FP — Material Blueprint to Functional Programming DSL
+# MatBP2FP
 
-> Engine support: UE 4.27 and UE 5.0-5.8. See [COMPATIBILITY.md](COMPATIBILITY.md) for the verified build matrix and old-engine toolchain notes.
-> Cross-version fixtures and automation commands: [Tests/README.md](Tests/README.md).
+MatBP2FP 是 Unreal Engine 材质图与 Lisp 风格 S-expression DSL（MatLang）之间的转换插件。它把二进制 `.uasset` 中的材质 DAG 表达为可解析、可编辑、可审查的文本，并提供导出、导入、校验、引用查询和局部更新能力。
 
-将 Unreal Engine 材质蓝图 (UMaterial) 转换为 S-expression 函数式 DSL (MatLang)，支持双向转换。
+当前版本为 `0.2.0-alpha`。材质转换和资产写入均属于 Editor 功能。
 
-## 概述
+## 当前支持的功能
 
-MatBP2FP 是 AnimBP2FP 的姊妹项目，采用相同的架构思路将材质蓝图转换为可读、可编辑、可版本控制的 DSL 文本格式。
+### 材质图与 MatLang 双向转换
 
-### 材质 vs 动画蓝图的关键差异
+- 将 `UMaterial` 导出为 `.matlang`，也可从 MatLang 创建新材质或更新已有材质。
+- 保存材质域、混合模式、着色模型、双面等材质属性，以及表达式节点、输入连线、材质输出槽和资产引用。
+- 使用显式 `$id` 与 `(connect $id output-index)` 表达 DAG 中的共享节点和多输出连接。
+- 常用常量、参数、纹理、数学、分支、Custom HLSL、Material Function Call 和 Named Reroute 节点使用专用转换逻辑；其他可实例化的 `UMaterialExpression` 类型会尝试通过类名和可编辑属性反射进行转换。
+- 支持在编辑器菜单、Commandlet、Unreal Python 和 Blueprint Function Library 中调用核心工作流。
 
-| 特性 | AnimBP (AnimLang) | Material (MatLang) |
-|------|------------------|-------------------|
-| 图结构 | 树 (单根) | DAG (有向无环图) |
-| 节点引用 | `(ref "Title")` | `(connect $id output-idx)` |
-| 节点标识 | NodeType + 位置 | 显式 `$id` |
-| 输出目标 | Root Pose | 多个材质输入槽 |
-| 状态机 | 有 | 无 |
-| 变量绑定 | `(define ...)` | 表达式 DAG 天然共享 |
-
-## DSL 语法 (MatLang)
+MatLang 示例：
 
 ```lisp
 (material "M_Example"
@@ -30,192 +24,201 @@ MatBP2FP 是 AnimBP2FP 的姊妹项目，采用相同的架构思路将材质蓝
   :two-sided false
 
   (expressions
-    (texture-sample $tex1
-      :texture (asset "/Game/Textures/T_Brick_D")
-      :uv (connect $uv1))
-    (texture-coordinate $uv1
-      :coordinate-index 0
-      :u-tiling 2.0)
-    (multiply $mul1
-      :a (connect $tex1 0)
-      :b (connect $color1 0))
-    (vector-parameter $color1
-      :name "TintColor"
-      :default (1.0 1.0 1.0 1.0))
-    (constant $const1
-      :value 0.5))
+    (scalar-parameter $roughness
+      :name "Roughness"
+      :default 0.65)
+    (vector-parameter $base-color
+      :name "BaseColor"
+      :default (1.0 0.8 0.6 1.0)))
 
   (outputs
-    :base-color (connect $mul1 0)
-    :metallic (connect $const1 0)
-    :roughness (connect $const1 0)))
+    :base-color (connect $base-color 0)
+    :roughness (connect $roughness 0)))
 ```
 
-### 语法要素
+仓库中的完整样例位于 [`DSL/Examples`](DSL/Examples)。
 
-| 语法 | 含义 |
-|------|------|
-| `(material "Name" ...)` | 材质顶层 |
-| `:domain surface` | 材质域 |
-| `:blend-mode opaque` | 混合模式 |
-| `:shading-model default-lit` | 着色模型 |
-| `(expressions ...)` | 表达式节点列表 |
-| `(expr-type $id :prop val ...)` | 表达式节点定义 |
-| `(connect $target-id output-idx)` | DAG 连接引用 |
-| `(asset "/Game/Path")` | 资产路径引用 |
-| `(outputs :slot (connect $id) ...)` | 材质输出连接 |
+### Material Function 导出与引用索引
 
-## 模块架构
+- 批量导出 `UMaterial` 和 `UMaterialFunction`，并按 Unreal mount point 保留目录结构。
+- Python 接口可递归导出某个材质引用的 Material Function 依赖。
+- 每次批量导出生成 `matlang-index.json`，记录资产定义、文件位置和 Material Function 调用关系。
+- `MatBP2FPRefs` Commandlet 可查询某个资产的入向和出向引用，并输出可定位的 `file:line` 位置。
 
+当前仅支持 **Material Function 导出**；尚不支持从 `(material-function ...)` 创建或更新 `UMaterialFunction`。
+
+### 语法检查、Stub 与往返验证
+
+- Tokenizer、Parser 和 AST 可解析 MatLang，并输出带文件、行列和规则编号的诊断。
+- Linter 检查枚举值、重复节点 ID、悬空引用、非法输出连接等问题，可在 CI 中批量运行。
+- Stub 导出扫描当前引擎中的 Material Expression 类型和可编辑属性，生成 `matlang-stub.scm`，供工具和 AI 在生成 DSL 时查询。
+- Round-trip 校验覆盖 `Export -> Parse -> Serialize -> Compare`；仓库还提供跨进程、落盘后重载的严格往返测试。
+
+测试夹具与自动化命令见 [`Tests/README.md`](Tests/README.md)。
+
+### 局部图修改与文本 Diff
+
+`.matlang` 是普通文本，节点、属性和连接都有明确边界。修改一个参数或一条连线时，Git diff 通常只包含对应的几行，比二进制 `.uasset` 更容易审查、合并和定位冲突。
+
+更新已有材质时，插件会先导出当前图并在 AST 层计算 diff：
+
+- 节点属性、输入连接、材质属性和输出槽变化会优先就地 Patch，并重新编译材质。
+- 节点新增、删除、类型变化和材质域变化属于结构变化，会自动回退到全量重建。
+- 若 Patcher 在应用变更时失败，会自动回退到全量重建。Lint 失败，或 Patch 后的图规范化/校验失败时，更新会直接报错并停止，不会把失败结果当作成功资产。
+
+为了可靠命中局部 Patch，应遵循 **Export -> Edit -> Update**：先导出当前材质，在导出文本上修改，并保留现有 `$id`。导出器的 `$id` 来自当前表达式顺序，并没有作为独立字段永久写入 `.uasset`；如果从头生成 DSL、重命名 `$id` 或大幅调整节点顺序，diff 可能被识别为结构变化。全量重建可以得到目标图，但不会保留原节点 GUID，布局也可能变化。
+
+### 批处理、映射与自动导出
+
+- 编辑器启动时建立 Material 与 DSL 文件的映射表，可通过 Python 查询 `Synced`、`MatOnly`、`DSLOnly` 和 `OutOfSync` 状态。
+- `Auto Sync Mode = Mat2FP` 时，材质编译完成后会延迟导出对应 `.matlang` 文件。
+- 导入生命周期提供节点、属性和完成阶段的扩展 Hook，供自动布局等下游编辑器插件接入。
+
+`FP2Mat` 文件监听模式目前尚未实现；从 DSL 自动回写材质仍需显式调用导入或更新接口。
+
+## 支持的 Unreal Engine 版本
+
+MatBP2FP 支持 UE 4.27，以及 UE 5.0 至 UE 5.8。以下版本已在 **Windows** 上逐版本验证 Editor 与 Game target 编译：
+
+| Unreal Engine | Editor target | Game target | 验证工具链 |
+| --- | --- | --- | --- |
+| UE 4.27 | 通过 | 通过 | MSVC 14.32 |
+| UE 5.0 | 通过 | 通过 | MSVC 14.32 |
+| UE 5.1 | 通过 | 通过 | MSVC 14.34 |
+| UE 5.2 | 通过 | 通过 | MSVC 14.34 |
+| UE 5.3 | 通过 | 通过 | MSVC 14.36 |
+| UE 5.4 | 通过 | 通过 | MSVC 14.38 |
+| UE 5.5 | 通过 | 通过 | MSVC 14.38 |
+| UE 5.6 | 通过 | 通过 | MSVC 14.38 |
+| UE 5.7 | 通过 | 通过 | MSVC 14.38 |
+| UE 5.8 | 通过 | 通过 | MSVC 14.44 |
+
+Game target 用于确认运行时模块不会把 Editor-only 类型带入打包构建；材质图的导入、导出和修改仍只在 Editor 中执行。
+
+插件清单允许 `Win64`、`Mac` 和 `Linux`，但当前逐版本构建矩阵只覆盖 Windows。Mac 和 Linux 尚未完成同等强度的验证，不应视为已保证的生产支持范围。
+
+版本适配细节、旧版引擎工具链注意事项见 [`COMPATIBILITY.md`](COMPATIBILITY.md)。
+
+## 安装
+
+### 前置条件
+
+- 已安装目标 Unreal Engine 版本及其对应的 C++ 编译工具链。
+- 项目可以编译 C++ 模块。纯 Blueprint 项目首次安装源码插件时，也需要安装编译工具链；必要时先为项目添加一个空 C++ 类。
+- 不要在不同引擎版本之间复用插件的 `Binaries` 或 `Intermediate` 目录，应由目标引擎重新编译。
+
+### 从 Git 安装到项目
+
+推荐使用项目级安装。关闭 Unreal Editor，然后在 PowerShell 中执行：
+
+```powershell
+New-Item -ItemType Directory -Force -Path "<Project>\Plugins"
+git clone https://github.com/cc8887/MaterialBP2DSL.git "<Project>\Plugins\MatBP2FP"
 ```
-MatBP2FP/                    (Runtime, PreDefault)
-├── MatLangAST.h/cpp         AST 数据结构 (DAG)
-├── MatLangTokenizer.h/cpp   S-expression 词法分析
-├── MatLangParser.h/cpp      递归下降语法分析
-├── MatLangRoundTrip.h/cpp   往返验证
-├── MatBPExporter.h/cpp      UMaterial → DSL
-└── MatBPImporter.h/cpp      DSL → UMaterial
 
-MatBP2FPEditor/              (Editor, Default)
-├── MatBP2FPEditorModule      编辑器菜单
-├── MatBP2FPSettings           项目设置
-├── MatBP2FPExportCommandlet   导出命令行
-├── MatBP2FPImportCommandlet   导入命令行
-└── MatBP2FPRoundTripCommandlet 验证命令行
+也可以下载仓库 ZIP 并解压到同一位置。最终目录应满足：
+
+```text
+<Project>/
+  Plugins/
+    MatBP2FP/
+      MatBP2FP.uplugin
+      Source/
+      Config/
 ```
 
-## 使用方法
+随后：
+
+1. 重新生成项目文件，并使用目标引擎构建项目的 `Development Editor` target；使用 Epic Launcher 引擎时，也可以在首次打开项目时接受“编译缺失模块”的提示。
+2. 打开项目，在 `Edit -> Plugins` 中搜索 `MatBP2FP` 并启用插件。
+3. 需要使用下文的 Unreal Python 接口时，同时启用引擎内置的 `Python Editor Script Plugin`。
+4. 按提示重启编辑器。
+5. 在主菜单 `Tools` 的 `MatBP2FP` 分区中确认可以看到导出、Stub 和 Round-trip 命令。
+
+若需要让多个项目共用插件，可将目录放入对应引擎的 `Engine/Plugins` 下，但项目级安装更容易固定插件版本，也能避免影响其他工程。
+
+## 快速使用
 
 ### 编辑器菜单
-`Tools → MatBP2FP → Export All Materials to DSL`
-`Tools → MatBP2FP → Run Round-Trip Validation`
+
+主菜单 `Tools` 的 `MatBP2FP` 分区提供：
+
+- `Export All Materials to DSL`：批量导出项目中的 Material 与 Material Function，并生成引用索引。
+- `Export MatLang Stub`：导出当前引擎的表达式类型签名。
+- `Run Round-Trip Validation`：验证项目材质的文本往返一致性。
+
+默认输出目录为：
+
+```text
+<Project>/Saved/BP2DSL/MatBP/
+```
+
+例如 `/Game/Materials/M_Main` 会导出为 `Game/Materials/M_Main.matlang`。
 
 ### Commandlet
-```bash
-# 导出所有游戏材质
-UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -all -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
-# Custom output root (default: Saved/BP2DSL/MatBP)
-UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -all -output="Saved/MaterialDSL" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
+UE5 使用 `UnrealEditor-Cmd.exe`；UE4.27 请替换为 `UE4Editor-Cmd.exe`。
 
-# 导出指定材质
-UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPExport -material=/Game/Materials -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
+```powershell
+# 导出 Material 和 Material Function；可用 -path、-material 或 -output 过滤/改写输出
+UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPExport -all -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
-# 往返验证
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPRoundTrip
+# 只检查文件或目录，不修改资产；可追加 -fail-on-warning
+UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPLint -path="<FileOrDirectory>" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
-# 导入
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -test
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -update
-UnrealEditor.exe "Project.uproject" -run=MatBP2FPImport -file=path/to/material.matlang
+# 从文件创建材质；追加 -update 时按文件名查找并更新已有材质（当前不会保存 package）
+UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPImport -file="<Material.matlang>" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
-# Lint a file or directory without modifying assets
-UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPLint -path=path/to/material.matlang
-
-# Query definition and incoming/outgoing Material Function references
-UnrealEditor-Cmd.exe "Project.uproject" -run=MatBP2FPRefs -asset="/Game/Functions/MF_Noise.MF_Noise" -direction=both -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
+# 查询 Material Function 定义及入向/出向引用
+UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPRefs -asset="/Game/Functions/MF_Noise.MF_Noise" -direction=both -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 ```
 
-Batch export preserves Unreal mount points in output paths. For example,
-`/Game/Materials/M_Main` becomes `Game/Materials/M_Main.matlang`. The generated
-`matlang-index.json` maps canonical asset paths to files and records call sites;
-reference-query output uses clickable `file:line` locations.
+导出命令还支持 `-materials-only`、`-functions-only` 和 `-include-engine`。默认不导出 `/Engine`、`/Script`、`/Temp` 和 `/Transient` 内容。
 
-### 项目设置
-`Edit → Project Settings → Plugins → MatBP2FP`
-- Export Output Path (默认: `MatLang/Exported/`)
-- Include Editor Positions
-- Include Comments
-- Auto Compile After Import
+当前 `MatBP2FPImport` Commandlet 只创建或更新内存中的资产并将 package 标记为 dirty，没有调用保存接口；在无头进程退出后不能依赖这些改动持久化。需要保存资产时，请使用下述 Python/Blueprint Bridge 并将 `bSavePackage` 设为 `true`，或在 Editor 会话中显式保存 package。
 
-## 支持的表达式类型
-
-### 数学运算
-`add`, `subtract`, `multiply`, `divide`, `power`, `dot-product`, `cross-product`, `abs`, `clamp`, `linear-interpolate`, `one-minus`, `normalize`, `floor`, `ceil`, `frac`, `sine`, `cosine`
-
-### 常量
-`constant`, `constant2-vector`, `constant3-vector`, `constant4-vector`
-
-### 参数
-`scalar-parameter`, `vector-parameter`, `static-switch-parameter`, `texture-object-parameter`
-
-### 纹理
-`texture-sample`, `texture-coordinate`, `panner`
-
-### 工具
-`component-mask`, `append-vector`, `if`, `static-switch`, `desaturation`, `fresnel`, `distance`, `transform`
-
-### 高级
-`material-function-call`, `custom` (HLSL), `function-input`, `function-output`
-
-### 世界数据
-`time`, `world-position`, `vertex-normal-ws`, `camera-position-ws`
-
-## 已知限制
-
-1. **Material Functions**: 函数内部表达式不展开，仅保存函数资产引用
-2. **Custom HLSL**: 代码以转义字符串保存
-3. **Material Instances**: 当前仅支持基础材质 (UMaterial)，不支持 Material Instance
-4. **编辑器位置**: 默认不导出节点编辑器位置（可在设置中启用）
-5. **Dynamic 表达式**: 部分动态生成的表达式类型可能需要通过反射回退处理
-6. **增量 patch 与 `$id` 稳定性**（重要，下节详述）
-
-## 增量更新与 `$id` 稳定性
-
-`update_material_from_text` 设计上有**增量补丁**（只改属性 / 连线）和**全量重建**两条路径，由 Differ 输出的 `NumStructural` 决定走哪条：
-
-```
-NumStructural == 0  →  FMatLangPatcher.Apply（增量；仅改属性 / 连线）
-NumStructural >  0  →  ClearMaterial + 重新创建所有 expression（全量）
-```
-
-但 Differ 把 `$id` 当作匹配两次 export 之间"同一节点"的唯一 key（`MatLangDiffer.cpp::DiffExpressions` 用 `Expr->Id` 建 `OldById` / `NewById`）。而 Exporter 给每个 `UMaterialExpression` 分配 `$id` 时**不读取任何持久化字段**，是按 `$<typeprefix><counter>` 当场生成的（`MatBPExporter.cpp::GetOrAssignId`）。
-
-后果：
-
-- **第一次 import 之后**，DSL 里写的语义 ID（`$base_color`、`$rim_fresnel`）不会被保留——`UMaterialExpression` 上没有任何字段记录"我在 matlang 里叫什么"。
-- **下一次 `update_material_from_text` 时**，Step 1 重新 export 当前材质得到 OldAST，IDs 是 `$vec31`、`$mul3`、`$sparam2`...；调用方传入的 NewAST 用的还是 `$base_color` 等语义 ID。两套集合零交集 → Differ 视所有旧节点为 Removed、所有新节点为 Added，全部按 Structural 计数 → 触发全量重建。
-
-实测：41 个节点的描边材质，仅修改两个 scalar 默认值，Diff 报告 87 changes (82 structural)，最终走 full rebuild。
-
-### 什么场景下增量 patch 真的会生效？
-
-只有在**调用方先 export、再修改、再 import**的回路里：
+### Unreal Python
 
 ```python
-# ✅ 增量 patch 命中
-exp = unreal.MatBP2FPPythonBridge.export_material_to_text("/Game/M_Foo.M_Foo")
-new_dsl = exp.dsl_text.replace(":default 0.5", ":default 0.85")  # 仅改属性值
-unreal.MatBP2FPPythonBridge.update_material_from_text("/Game/M_Foo.M_Foo", new_dsl, True)
+import unreal
 
-# ❌ 全量重建（典型 AI workflow）
-my_dsl = build_dsl_with_semantic_ids()  # $base_color, $rim_fresnel, ...
-unreal.MatBP2FPPythonBridge.update_material_from_text("/Game/M_Foo.M_Foo", my_dsl, True)
+exported = unreal.MatBP2FPPythonBridge.export_material_to_text(
+    "/Game/Materials/M_Example.M_Example"
+)
+if not exported.success:
+    raise RuntimeError(exported.message)
+
+# 在 exported.dsl_text 上做局部修改，并保留原有 $id
+updated_text = exported.dsl_text.replace(":default 0.65", ":default 0.8")
+
+result = unreal.MatBP2FPPythonBridge.update_material_from_text(
+    "/Game/Materials/M_Example.M_Example",
+    updated_text,
+    True,
+)
+if not result.success:
+    raise RuntimeError(result.message)
+if not result.saved_package:
+    raise RuntimeError("Material updated but package save failed")
 ```
 
-### 推荐工作流（Export-Edit-Import 模式）
+Python/Blueprint Bridge 还提供文件导入导出、递归依赖导出、Round-trip 验证、路径映射查询和 Stub 导出接口，完整签名见 [`MatBP2FPPythonBridge.h`](Source/MatBP2FPEditor/Public/MatBP2FPPythonBridge.h)。
 
-如果你需要享受增量 patch 的速度（避免大材质全图重排）和精度（节点 GUID 稳定，引用关系不重建），把流程改成：
+## 配套 AI Skill
 
-1. `export_material_to_text` 取当前 DSL；
-2. 在导出文本上**就地修改**——不要重写、不要换 `$id`；
-3. 把改完的文本通过 `update_material_from_text` 推回。
+MatBP2FP 的配套 AI Skill 收录在公开仓库 [UE-Editor-MCPServer-Skills](https://github.com/cc8887/UE-Editor-MCPServer-Skills) 中：
 
-### 何时无所谓
+- Git：`https://github.com/cc8887/UE-Editor-MCPServer-Skills.git`
+- Skill 直达：[plugins/matbp2fp](https://github.com/cc8887/UE-Editor-MCPServer-Skills/tree/main/plugins/matbp2fp)
 
-如果你只关心"材质最终长什么样"，不在意是否走增量 patch，那么这个限制实际不影响功能正确性——全量重建会忠实地按 NewAST 重建图，行为与增量 patch 等价，只是更慢且不保留节点 GUID。
+该 Skill 是通过 MCP 和 `unreal.MatBP2FPPythonBridge` 调用本插件的可选自动化层，不是 MatBP2FP 的编译或运行依赖。插件当前支持范围和能力边界以本 README 与当前代码为准。
 
-### 对下游钩子（如 BlueprintAutoLayout / DrivenHighlight）的影响
+## 已知边界
 
-由于全量重建会广播 `OnNodePhase(PostNodeChanges)` 上 N 个 `Added` 事件、且**不**走 `OnPropertyPhase` 路径，依赖生命周期事件的下游消费者会观察到：
-
-- 每次"小改 DSL"都收到一波 N×Added 事件，而不是预期的少量 Modified；
-- `OnPropertyPhase` 事件在材质场景下基本不会触发（只有真正 export-edit-import 的回路才会发）；
-- 下游若按 NodeGuid 跨 import 跟踪某个语义节点，跟丢——节点 GUID 在每次全量重建时都会变。
-
-## 相关插件
-
-- **AnimBP2FP**：动画蓝图 ⇄ AnimLang DSL 转换（姊妹项目，架构思路一致）
-- **BlueprintLisp**：EventGraph ⇄ BlueprintLisp DSL 转换
-- **BlueprintAutoLayout**：图节点自动排版。MatBP2FP 通过导入生命周期钩子（`PostNodeChanges` 阶段）与之集成——当导入上下文请求 `AutoLayout` 行为时，材质 DSL 导入完成后会自动整理新增/变更节点的布局。集成为可选：BlueprintAutoLayout 未启用时不影响导入，只是不自动排版。
+- 当前处理基础 `UMaterial`，不支持 `UMaterialInstance`。
+- `UMaterialFunction` 当前可导出和建立引用索引，但不可从 DSL 导入或更新。
+- 复杂数组、内部对象引用或引擎私有结构不一定能通过通用反射无损恢复。跨版本或使用特殊表达式时，应先运行 Lint 和 Round-trip 验证。
+- 导入中的纹理、Material Function 等资产路径必须能在目标工程中解析；缺失依赖会产生降级警告。
+- 局部 Patch 依赖当前导出文本中的 `$id` 与现有图匹配；结构变化、ID 不匹配或 Patch 失败会回退到全量重建。
+- `Mat2FP` 自动导出可用，`FP2Mat` 文件监听自动导入尚未实现。
+- 当前完整验证矩阵仅覆盖 Windows。
