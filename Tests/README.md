@@ -34,11 +34,23 @@ UnrealEditor-Cmd.exe <Project>.uproject -unattended -nop4 -nosplash -NullRHI \
 The lint commandlet returns `0` on success, `1` when diagnostics fail policy,
 and `2` for usage, input discovery, or I/O failures.
 
+Run compile-free MatLang cost analysis without importing assets or compiling shaders:
+
+```text
+UnrealEditor-Cmd.exe <Project>.uproject -unattended -nop4 -nosplash -NullRHI \
+  -run=MatBP2FPPerf -path=<file-or-directory> \
+  -output=Saved/MatBP2FP/Reports/material-cost.json -fail-on-unknown
+```
+
+The performance commandlet reports graph reachability, vertex/pixel paths, texture
+sample sites, relative ALU proxy units, static-switch scenarios, function expansion,
+and risk findings. Its exit codes use the same `0`/`1`/`2` convention as lint.
+
 Run the headless material graph export and reference-index tests:
 
 ```text
 UnrealEditor-Cmd.exe <Project>.uproject -unattended -nop4 -nosplash -NullRHI \
-  -ExecCmds="Automation RunTests MatBP2FP.Export; Automation RunTests MatBP2FP.Lint; Quit" \
+  -ExecCmds="Automation RunTests MatBP2FP.Export; Automation RunTests MatBP2FP.Lint; Automation RunTests MatBP2FP.Perf; Quit" \
   -TestExit="Automation Test Queue Empty"
 ```
 

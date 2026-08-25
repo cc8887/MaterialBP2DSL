@@ -166,6 +166,9 @@ UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPExport -all -NullRHI -Una
 # 只检查文件或目录，不修改资产；可追加 -fail-on-warning
 UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPLint -path="<FileOrDirectory>" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
+# 不编译 Shader，直接从 DSL 分析可达图、VS/PS 路径、纹理采样点、ALU 代理、Static Switch 和 Function 依赖
+UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPPerf -path="<FileOrDirectory>" -output="Saved/MatBP2FP/Reports/material-cost.json" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
+
 # 从文件创建材质；追加 -update 时按文件名查找并更新已有材质（当前不会保存 package）
 UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPImport -file="<Material.matlang>" -NullRHI -Unattended -NoSplash -NoP4 -UTF8Output
 
@@ -174,6 +177,19 @@ UnrealEditor-Cmd.exe "<Project>.uproject" -run=MatBP2FPRefs -asset="/Game/Functi
 ```
 
 导出命令还支持 `-materials-only`、`-functions-only` 和 `-include-engine`。默认不导出 `/Engine`、`/Script`、`/Temp` 和 `/Transient` 内容。
+
+`MatBP2FPPerf` 输出 JSON 静态成本报告，不加载纹理资产，也不调用 Shader Compiler。目录分析会通过 DSL 的 `:asset-path` 递归展开其中的 Material Function。每项路径成本包含 `low`、`default` 和 `conservative` 三种结果；`conservative` 会把 Static Switch 的两条分支都纳入，适合发现成本上包络，但不表示某一个运行时 permutation 会同时执行两条分支。`alu_proxy` 是用于版本间相对比较的平台无关权重，不是 Shader instruction count。Custom HLSL、缺失 Function 和递归 Function 会被标记为 `unknown`。
+
+可选的 CI 策略参数为：
+
+- `-conservative`：使用保守结果而不是默认 Static Switch 场景执行预算判断。
+- `-max-pixel-alu=<N>`、`-max-vertex-alu=<N>`：限制 ALU 代理。
+- `-max-pixel-texture-samples=<N>`、`-max-vertex-texture-samples=<N>`：限制可达 Texture Sample 节点数。
+- `-max-static-combinations=<N>`：限制可达静态参数的理论组合上界。
+- `-fail-on-unknown`：Custom HLSL 或未解析依赖导致成本不完整时失败。
+- `-fail-on-warning`：任一性能风险为 warning 时失败。
+
+报告默认写到 `<Project>/Saved/MatBP2FP/Reports/matlang-static-cost.json`。退出码 `0` 表示报告生成且策略通过，`1` 表示 DSL 无效或预算策略失败，`2` 表示参数、输入发现或 I/O 错误。
 
 当前 `MatBP2FPImport` Commandlet 只创建或更新内存中的资产并将 package 标记为 dirty，没有调用保存接口；在无头进程退出后不能依赖这些改动持久化。需要保存资产时，请使用下述 Python/Blueprint Bridge 并将 `bSavePackage` 设为 `true`，或在 Editor 会话中显式保存 package。
 
