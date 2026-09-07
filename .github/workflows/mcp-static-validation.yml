@@ -1,0 +1,30 @@
+name: MatBP2FP MCP static validation
+
+on:
+  push:
+    paths:
+      - "Plugins/MatBP2FPMCP/**"
+      - "Tools/validate_mcp_isolation.py"
+      - ".github/workflows/mcp-static-validation.yml"
+  pull_request:
+    paths:
+      - "Plugins/MatBP2FPMCP/**"
+      - "Tools/validate_mcp_isolation.py"
+      - ".github/workflows/mcp-static-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Validate UE 5.8 MCP isolation
+        run: python Tools/validate_mcp_isolation.py
