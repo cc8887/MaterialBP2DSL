@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "MatBP2FP UE 5.8 MCP",
+  "Description": "Native UE 5.8 MCP Toolsets for MatBP2FP material DSL operations",
+  "Category": "AI",
+  "CreatedBy": "ccc887",
+  "CanContainContent": false,
+  "IsExperimentalVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "MatBP2FPMCP",
+      "Type": "Editor",
+      "LoadingPhase": "Default",
+      "TargetAllowList": [ "Editor" ]
+    }
+  ],
+  "Plugins": [
+    { "Name": "MatBP2FP", "Enabled": true },
+    { "Name": "ToolsetRegistry", "Enabled": true },
+    { "Name": "ModelContextProtocol", "Enabled": true }
+  ]
+}

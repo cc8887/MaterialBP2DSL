@@ -220,6 +220,51 @@ if not result.saved_package:
 
 Python/Blueprint Bridge 还提供文件导入导出、递归依赖导出、Round-trip 验证、路径映射查询和 Stub 导出接口，完整签名见 [`MatBP2FPPythonBridge.h`](Source/MatBP2FPEditor/Public/MatBP2FPPythonBridge.h)。
 
+## UE 5.8 原生 MCP Toolset
+
+UE 5.8 的原生 MCP 接入放在可选插件 [`Plugins/MatBP2FPMCP`](Plugins/MatBP2FPMCP) 中。基础 `MatBP2FP` 插件仍保持 UE 4.27 至 UE 5.8 的兼容边界，不引入 UE 5.8 才提供的 `ToolsetRegistry` 或 `ModelContextProtocol` 依赖。该 MCP 插件只应在 UE 5.8 或更新版本的 Editor target 中启用。
+
+项目级安装时，把可选插件复制到基础插件的同级目录：
+
+```text
+<Project>/Plugins/
+  MatBP2FP/                 # 本仓库根目录插件
+  MatBP2FPMCP/              # MatBP2FP/Plugins/MatBP2FPMCP 的内容
+```
+
+例如从本仓库安装后执行：
+
+```powershell
+Copy-Item -Recurse -Force `
+  "<Project>\Plugins\MatBP2FP\Plugins\MatBP2FPMCP" `
+  "<Project>\Plugins\MatBP2FPMCP"
+```
+
+在 UE 5.8 的 `Edit -> Plugins` 中启用 `MatBP2FP`、`MatBP2FPMCP`、`ToolsetRegistry` 和 `ModelContextProtocol`，然后重新生成项目文件并编译 `Development Editor`。也可以用命令行启动 MCP 服务：
+
+```powershell
+UnrealEditor-Cmd.exe "<Project>.uproject" `
+  -ModelContextProtocolStartServer `
+  -ModelContextProtocolPort=8000
+```
+
+插件注册两个 Toolset：
+
+- `MatBP2FPMCP.MatBP2FPInspectToolset`：导出材质 DSL、Round-trip 验证、映射表查询和 DSL 路径查询，全部为只读操作。
+- `MatBP2FPMCP.MatBP2FPEditToolset`：从 DSL 文本创建或更新材质；`bSavePackage` 是显式参数，只有传入 `true` 才会持久化 package。
+
+UE 5.8 的 Tool Search 模式会通过 `list_toolsets`、`describe_toolset` 和 `call_tool` 三个 MCP meta-tool 发现并调用上述 Toolset。工具只接受 `/Game/` 资产路径，拒绝路径穿越、文件系统路径和直接文件导入；需要批量文件处理时应由外部 Skill 读取文本后调用文本接口。
+
+宏隔离位于可选模块边界：只有 `MatBP2FPMCP.Build.cs` 定义 `MATBP2FP_WITH_MCP=1`，MCP 实现和测试也受该宏保护。`UCLASS`/`UFUNCTION` 反射声明本身不包在自定义 `#if` 中，因为 UE 5.8 UHT 会拒绝这种写法；旧引擎不会扫描这个独立插件，因此不会解析这些类型。
+
+本地 UE 5.8 自动化验证命令如下：
+
+```powershell
+UnrealEditor-Cmd.exe "<Project>.uproject" -unattended -nop4 -nosplash -NullRHI `
+  "-ExecCmds=Automation RunTests MatBP2FP.MCP; Quit" `
+  "-TestExit=Automation Test Queue Empty" -NoSound -NoLoadingScreen -UTF8Output
+```
+
 ## 配套 AI Skill
 
 MatBP2FP 的配套 AI Skill 收录在公开仓库 [UE-Editor-MCPServer-Skills](https://github.com/cc8887/UE-Editor-MCPServer-Skills) 中：

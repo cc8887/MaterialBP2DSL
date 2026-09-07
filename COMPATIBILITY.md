@@ -36,6 +36,28 @@ ALU proxy values, texture sample-site counts, dead-node counts, and verdicts.
 An additional source-engine UE6 build passed as a forward-compatibility check;
 UE6 is not part of the advertised support range.
 
+## UE 5.8 native MCP Toolset verification
+
+The optional `Plugins/MatBP2FPMCP` plugin was validated against the installed
+UE 5.8.1 editor (CL 56057345) on Windows with MSVC 14.44. The base
+`MatBP2FP` plugin remains independent of the UE 5.8 MCP modules; the optional
+module defines `MATBP2FP_WITH_MCP=1` and is built only for UE 5.8 or newer.
+
+The local CI run completed all of the following:
+
+- UE 5.8 `UnrealEditor` Development target build for a host project with
+  `MatBP2FPMCP`, `ToolsetRegistry`, and `ModelContextProtocol` enabled;
+- `MatBP2FP.MCP.ToolsetSchema` and
+  `MatBP2FP.MCP.ToolsetRegistration` automation tests;
+- native MCP HTTP `initialize`, `notifications/initialized`, `tools/list`,
+  and `tools/call` requests, with both project Toolsets discoverable;
+- base plugin Game Development and Game Shipping packaging builds.
+
+The optional plugin is intentionally separate from the base plugin because UE
+Header Tool does not allow custom preprocessor blocks around reflected
+`UCLASS`/`UFUNCTION` declarations. This preserves the older-engine build path
+without hiding reflected declarations from the UE 5.8 UHT pass.
+
 ## Compatibility boundaries
 
 Version-specific engine APIs are isolated in
