@@ -1,0 +1,40 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "MatBP2FP UE 5.8 MCP",
+  "Description": "Optional UE 5.8 MCP Toolset integration for MatBP2FP.",
+  "Category": "AI",
+  "CreatedBy": "OpenClaw Research",
+  "CreatedByURL": "",
+  "DocsURL": "",
+  "MarketplaceURL": "",
+  "SupportURL": "",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "EnabledByDefault": false,
+  "Modules": [
+    {
+      "Name": "MatBP2FPMCP",
+      "Type": "Editor",
+      "LoadingPhase": "Default",
+      "WhitelistPlatforms": ["Win64", "Mac", "Linux"]
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "MatBP2FP",
+      "Enabled": true
+    },
+    {
+      "Name": "ToolsetRegistry",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "ModelContextProtocol",
+      "Enabled": true,
+      "Optional": true
+    }
+  ]
+}
