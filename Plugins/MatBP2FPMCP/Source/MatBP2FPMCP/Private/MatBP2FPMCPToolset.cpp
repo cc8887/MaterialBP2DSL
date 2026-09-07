@@ -22,7 +22,7 @@ namespace MatBP2FPMCP
 
         const bool bIsContentRoot = Path == TEXT("/Game");
         const bool bIsUnderGame = Path.StartsWith(TEXT("/Game/"));
-        const bool bHasUnsafeSyntax = Path.Contains(TEXT("\")) ||
+        const bool bHasUnsafeSyntax = Path.Contains(TEXT("\\")) ||
             Path.Contains(TEXT("..")) ||
             Path.Contains(TEXT("//"));
 
