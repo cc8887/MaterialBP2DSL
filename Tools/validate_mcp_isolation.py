@@ -75,6 +75,9 @@ if "bool bSavePackage = false" not in toolset_header:
     fail("write tools must default bSavePackage to false")
 if "ValidateGamePath" not in toolset_cpp or 'Path.Contains(TEXT(".."))' not in toolset_cpp:
     fail("write/read path validation is missing")
+backslash_guard = 'Path.Contains(TEXT("' + chr(92) * 2 + '"))'
+if backslash_guard not in toolset_cpp:
+    fail("path validation must reject Windows backslashes with a valid C++ string literal")
 if "RegisterToolsetClass" not in module_cpp or "UnregisterToolsetClass" not in module_cpp:
     fail("toolset startup/shutdown registration is missing")
 
